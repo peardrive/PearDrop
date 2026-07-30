@@ -60,6 +60,21 @@
            END: Soft Aurora background
            ============================================================ */
 
+        /* App shell wraps the sidebar (hidden in mobile-UI, shown in
+           desktop-UI) and the main app column.
+           NOTE: no `z-index` here — that used to create a stacking-context
+           trap that prevented the sidebar's children from ever competing
+           with the drag-region at body's root. The aurora body::before
+           is at z-index: 0 with pointer-events: none, so it's still
+           painted behind app-shell naturally via DOM order. */
+        .app-shell {
+            position: relative;
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+            min-width: 0;
+        }
+
         .app {
             display: flex;
             flex-direction: column;
@@ -67,11 +82,645 @@
             padding: 16px;
             padding-top: 35px; /* Space for drag region + header */
             gap: 12px;
-            position: relative;
-            z-index: 1;
+            flex: 1;
+            min-width: 0;
+            position: relative; /* anchor for the desktop-Share floating button */
         }
 
-        /* Draggable title bar region */
+        /* Page header — desktop-UI only. Sits above the page content with
+           a big title indicating which page (Shares / Receive / folder). */
+        .page-header {
+            display: none;
+            padding: 0 4px;
+            flex-shrink: 0;
+        }
+
+        .page-title {
+            font-size: 26px;
+            font-weight: 700;
+            color: #fff;
+            margin: 0;
+            letter-spacing: -0.3px;
+            line-height: 1.2;
+        }
+
+        @media (min-width: 600px) {
+            .page-header {
+                display: block;
+            }
+        }
+
+        /* ============================ Sidebar ============================
+           Mobile-UI (default, < 600px): hidden — the existing top tab/
+           tab-bar handles navigation. Desktop-UI (≥ 600px): shown as a
+           200px-wide column on the left.
+           ================================================================ */
+        /* ============================================================
+           SIDEBAR — full rebuild. Plain flex-column that sits inside
+           .app-shell's flex row. No positioning tricks, no z-index
+           gymnastics, no drag-region overrides needed:
+             - .app-shell's stacking-context trap (z-index: 1) is removed
+               so children compete at body's root.
+             - .drag-region is inset from the left by 200px on desktop
+               so it never overlays the sidebar's top strip.
+           Result: every sidebar item is clickable across its whole
+           surface, including the top row.
+           ============================================================ */
+        .sidebar {
+            display: none;
+            flex-direction: column;
+            width: 200px;
+            flex-shrink: 0;
+            padding: 10px 12px 14px;
+            background: rgba(20, 20, 24, 0.5);
+            backdrop-filter: blur(28px) saturate(140%);
+            -webkit-backdrop-filter: blur(28px) saturate(140%);
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
+            gap: 6px;
+        }
+
+        .sidebar-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .sidebar-footer {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .sidebar-nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 10px 12px;
+            border: none;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.72);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .sidebar-nav-item:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+        }
+
+        .sidebar-nav-item.is-active {
+            background: rgba(168, 206, 56, 0.18);
+            color: rgba(168, 206, 56, 1);
+        }
+
+        .sidebar-nav-item:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .sidebar-nav-icon {
+            font-size: 16px;
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+
+        .sidebar-nav-label {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* CTA-style sidebar item — used for "+ Add Folder". Dashed
+           outline "add new" convention, uppercase bold text. */
+        .sidebar-nav-item.sidebar-nav-cta {
+            text-transform: uppercase;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.8px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px dashed rgba(255, 255, 255, 0.2);
+            margin-top: 6px;
+        }
+
+        .sidebar-nav-item.sidebar-nav-cta .sidebar-nav-icon {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .sidebar-nav-item.sidebar-nav-cta:hover:not(:disabled) {
+            background: rgba(168, 206, 56, 0.12);
+            border-color: rgba(168, 206, 56, 0.55);
+            color: rgba(168, 206, 56, 1);
+        }
+
+        /* Desktop-UI breakpoint: window ≥ 600px → sidebar appears. The
+           Share/Receive tabs in the column header are redundant on desktop
+           (sidebar handles that nav), so hide them. */
+        @media (min-width: 600px) {
+            .sidebar {
+                display: flex;
+            }
+            .app-shell .tab-bar .tabs {
+                display: none;
+            }
+        }
+
+        /* ============================================================
+           Page-switch list filter — applies in BOTH layouts (mobile tabs
+           and desktop sidebar both filter the drives list).
+           ============================================================ */
+        #listContainer.view-share .scroll-list-slot[data-type="download"] {
+            display: none;
+        }
+        #listContainer.view-receive .scroll-list-slot[data-type="share"] {
+            display: none;
+        }
+
+        /* Bottom bar wrapper — only the action buttons live here now.
+           Mobile-UI lays it out as a normal block at the bottom of .app. */
+        .bottom-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        /* Mobile-UI: the link input was originally INSIDE the bottom-bar,
+           visually just above the action buttons. We pulled it out in the
+           DOM so it can take the drop-zone slot on desktop Receive; on
+           mobile, use flex `order` so it still renders right above the
+           bottom-bar (no visual change from before). */
+        .link-input-container {
+            order: 5;
+        }
+        .bottom-bar {
+            order: 6;
+        }
+
+        /* Wrapper around <input.link-input> + QR button. Provides the
+           positioning context for the absolutely-positioned QR button
+           (previously anchored to .link-input-container). Layout-neutral
+           on mobile — behaves like the input took the full width. */
+        .link-input-field {
+            position: relative;
+            display: block;
+            width: 100%;
+        }
+
+        /* ============================================================
+           Desktop-UI page-swap layout (≥ 600px only).
+           In mobile-UI the drop zone, link input, and BOTH action buttons
+           stay visible at all times regardless of the active tab — only
+           the list filter applies.
+           ============================================================ */
+        @media (min-width: 600px) {
+            /* Receive page: hide the drop zone. Share page: hide the link
+               input (no link to paste when sharing). */
+            .app.page-receive .drop-zone {
+                display: none;
+            }
+            .app.page-share .link-input-container {
+                display: none;
+            }
+
+            /* Per-page action button: SHARE on Share, DOWNLOAD on Receive. */
+            .app.page-share .actions .action-btn.download {
+                display: none;
+            }
+            .app.page-receive .actions .action-btn.share {
+                display: none;
+            }
+
+            /* ==================================================
+               Desktop panel redesign — VERTICAL STACK (hero + rail).
+               Both panels are 150px tall glass boxes with two zones:
+                 HERO — inset card (dashed drop / bordered input), fills
+                        the upper area and is the interaction target.
+                 RAIL — full-width primary action button flush at the
+                        bottom, uppercase + arrow glyph.
+               ================================================== */
+
+            /* Both pages: hide the mobile .bottom-bar (its action moved
+               into the panel rail below). */
+            .app.page-share .bottom-bar,
+            .app.page-receive .bottom-bar {
+                display: none;
+            }
+
+            /* Shared bottom rail — the primary action button.
+               Overrides all mobile flex/absolute positioning so it spans
+               the panel's full width, sits flush at the bottom, and clips
+               to the panel's rounded corners via the panel's overflow. */
+            .app.page-share .drop-zone-share-btn,
+            .app.page-receive .link-input-download-btn {
+                display: inline-flex;
+                position: static;
+                top: auto;
+                right: auto;
+                bottom: auto;
+                left: auto;
+                transform: none;
+                width: 100%;
+                min-width: 0;
+                height: 44px;
+                padding: 0 20px;
+                flex: 0 0 auto;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                border-radius: 0;
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                text-transform: uppercase;
+                z-index: 3;
+            }
+            /* Neutralize the mobile lift-on-hover — the rail is bottom-
+               flush and a lift reveals the panel edge underneath. */
+            .app.page-share .drop-zone-share-btn:hover,
+            .app.page-receive .link-input-download-btn:hover {
+                transform: none;
+            }
+            /* Arrow glyph after the label — pure CSS so it survives JS
+               textContent updates (SHARING…, DOWNLOADING…). */
+            .app.page-share .drop-zone-share-btn::after {
+                content: '→';
+                font-size: 16px;
+                font-weight: 500;
+                letter-spacing: 0;
+                line-height: 1;
+                margin-left: 2px;
+            }
+            .app.page-receive .link-input-download-btn::after {
+                content: '↓';
+                font-size: 16px;
+                font-weight: 500;
+                letter-spacing: 0;
+                line-height: 1;
+                margin-left: 2px;
+            }
+
+            /* ---- SHARE (drop-zone) ---------------------------------- */
+            .app.page-share .drop-zone {
+                height: 150px;
+                flex-direction: column;
+                align-items: stretch;
+                justify-content: flex-start;
+                padding: 0;
+                gap: 0;
+                overflow: hidden;
+                cursor: default;
+            }
+
+            /* HERO (empty state): dashed aurora-green drop card, inset
+               from the panel edges. The click / drop target. */
+            .app.page-share .drop-content {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                flex: 1;
+                min-height: 0;
+                text-align: center;
+                margin: 12px 12px 8px;
+                padding: 6px 16px;
+                border: 1.5px dashed rgba(168, 206, 56, 0.28);
+                border-radius: 12px;
+                background: rgba(168, 206, 56, 0.03);
+                transition: border-color 0.25s ease, background 0.25s ease;
+                cursor: pointer;
+            }
+            .app.page-share .drop-zone:hover .drop-content,
+            .app.page-share .drop-zone.drag-over .drop-content {
+                border-color: rgba(168, 206, 56, 0.55);
+                background: rgba(168, 206, 56, 0.07);
+            }
+            .app.page-share .drop-content .drop-icon {
+                font-size: 26px;
+                margin: 0 0 4px;
+                opacity: 0.85;
+            }
+            .app.page-share .drop-content .drop-text {
+                font-size: 14px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                margin: 0 0 2px;
+            }
+            .app.page-share .drop-content .drop-hint {
+                font-size: 12px;
+                color: rgba(255, 255, 255, 0.5);
+                margin: 0;
+            }
+
+            /* HERO (has-files state): swapped in via .active on file-preview.
+               Same inset card outline (solid instead of dashed), horizontal
+               layout: icon | name/size | clear button. */
+            .app.page-share .file-preview.active {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: 14px;
+                flex: 1;
+                min-height: 0;
+                text-align: left;
+                margin: 12px 12px 8px;
+                padding: 0 14px;
+                border: 1.5px solid rgba(255, 255, 255, 0.12);
+                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.03);
+            }
+            .app.page-share .file-preview .file-icon-large {
+                font-size: 30px;
+                margin: 0;
+                flex-shrink: 0;
+            }
+            .app.page-share .file-preview .file-info {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: flex-start;
+                gap: 2px;
+                min-width: 0;
+                flex: 1;
+                text-align: left;
+            }
+            .app.page-share .file-preview .file-name {
+                font-size: 14px;
+                font-weight: 600;
+                max-width: none;
+            }
+            .app.page-share .file-preview .file-size {
+                font-size: 12px;
+                color: rgba(255, 255, 255, 0.55);
+            }
+            .app.page-share .file-preview .clear-btn {
+                margin: 0;
+                flex-shrink: 0;
+            }
+
+            /* Desktop column ordering — top to bottom:
+                 -10  page-header (always first)
+                  0   drop-zone / link-input-container (box, default)
+                  1   bottom-bar (action button, just under the box)
+                  2   tab-bar (empty on desktop — its 3-dot menu is lifted
+                              to the top-right, see rule below)
+                  3   list-container (fills the rest) */
+            .page-header {
+                order: -10;
+            }
+            .app-shell .tab-bar {
+                order: 2;
+            }
+            .app-shell #listContainer {
+                order: 3;
+            }
+
+            /* Lift the 3-dot list menu out of the tab-bar row and anchor
+               it to the top-right of the main column, aligned with the page
+               heading. The dropdown (position: absolute; top: 100%; right:
+               0) still opens directly below the button since the container
+               remains its positioning ancestor. */
+            .app-shell .tab-bar .list-menu-container {
+                position: absolute;
+                top: 40px;
+                right: 16px;
+                margin: 0;
+            }
+
+            /* ---- RECEIVE — Unified Pill Control (fresh redesign) ----
+               The panel shrinks to just hug the pill (78px tall). The
+               pill (input + QR + DOWNLOAD) fills the panel width with a
+               small margin from the edges. Two segments MEET seamlessly.
+               --------------------------------------------------------- */
+            .app.page-receive .link-input-container {
+                order: 0;
+                height: 78px;
+                flex-shrink: 0;
+                position: relative;
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: stretch;
+                padding: 0 14px;
+                gap: 0;
+                /* Keep the outer glass panel — small frame around the pill. */
+                border-radius: 16px;
+                background: rgba(40, 40, 40, 0.32);
+                backdrop-filter: blur(28px) saturate(140%);
+                -webkit-backdrop-filter: blur(28px) saturate(140%);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow:
+                    0 8px 32px rgba(0, 0, 0, 0.4),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+                overflow: hidden;
+            }
+
+            /* Pill LEFT segment: input + QR button.
+               Flex-grows to fill available width; flat right edge welds
+               to the DOWNLOAD segment. */
+            .app.page-receive .link-input-field {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                height: 50px;
+                width: auto;
+                max-width: none;
+                padding: 0 8px 0 18px;
+                position: relative;
+                flex: 1 1 auto;
+                min-width: 0;
+                min-height: 0;
+                margin: 0;
+                align-self: auto;
+                background: rgba(18, 18, 20, 0.65);
+                border: 1.5px solid rgba(255, 255, 255, 0.1);
+                border-right: none;
+                border-radius: 25px 0 0 25px;
+                transition: background 0.25s ease, border-color 0.25s ease;
+                overflow: hidden;
+            }
+            .app.page-receive .link-input-field::before {
+                content: '🔗';
+                font-size: 16px;
+                margin-right: 10px;
+                opacity: 0.55;
+                flex-shrink: 0;
+                line-height: 1;
+                transition: opacity 0.25s ease;
+            }
+            .app.page-receive .link-input-field:focus-within {
+                background: rgba(28, 30, 22, 0.75);
+                border-color: rgba(168, 206, 56, 0.45);
+            }
+            .app.page-receive .link-input-field:focus-within::before {
+                opacity: 0.95;
+            }
+
+            .app.page-receive .link-input {
+                background: transparent;
+                border: none;
+                border-radius: 0;
+                font-size: 13px;
+                line-height: 1.4;
+                padding: 0;
+                margin: 0;
+                width: 100%;
+                min-width: 0;
+                flex: 1;
+                color: #fff;
+                box-shadow: none;
+            }
+            .app.page-receive .link-input:focus {
+                background: transparent;
+                border: none;
+                outline: none;
+                box-shadow: none;
+            }
+            .app.page-receive .link-input::placeholder {
+                color: rgba(255, 255, 255, 0.35);
+                letter-spacing: 0.2px;
+            }
+
+            /* QR button — inline flex child inside the pill's left segment. */
+            .app.page-receive .qr-upload-btn {
+                position: static;
+                top: auto;
+                right: auto;
+                bottom: auto;
+                left: auto;
+                transform: none;
+                width: 34px;
+                height: 34px;
+                border-radius: 8px;
+                flex-shrink: 0;
+                margin-left: 4px;
+            }
+            .app.page-receive .qr-upload-btn:hover {
+                background: rgba(168, 206, 56, 0.18);
+                color: rgba(168, 206, 56, 0.95);
+            }
+
+            /* Pill RIGHT segment: DOWNLOAD button.
+               Flat left edge — welds to the input segment. Fixed-width
+               capsule end-cap, matches the pill segment's 50px height. */
+            .app.page-receive .link-input-download-btn {
+                position: static;
+                top: auto;
+                right: auto;
+                bottom: auto;
+                left: auto;
+                transform: none;
+                width: auto;
+                min-width: 148px;
+                max-width: 168px;
+                height: 50px;
+                padding: 0 22px;
+                flex: 0 0 auto;
+                border-radius: 0 25px 25px 0;
+                /* Elevated on top of the input-segment border seam. */
+                z-index: 4;
+            }
+            .app.page-receive .link-input-download-btn:hover {
+                transform: none;
+            }
+
+            /* =====================================================
+               ALL SHARES page — both drop-zone AND link-input pill
+               visible together. .app has page-share + page-receive
+               + page-allshares, so every existing hero-rail and pill
+               style fires. The one thing to fix is the drop-zone,
+               which page-receive hides — override it here. The
+               link-input-container already wins over page-share's
+               hide rule via its later `display: flex` declaration.
+               ===================================================== */
+            .app.page-allshares .drop-zone {
+                display: flex;
+            }
+
+            /* ---- Mode switch (Send / Receive) — All Shares only ----- */
+            .app.page-allshares .mode-tabs {
+                display: inline-flex;
+                align-self: center;
+                gap: 4px;
+                padding: 4px;
+                background: rgba(20, 20, 24, 0.5);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 999px;
+                margin: 0 auto;
+                order: -5; /* between page-header (-10) and boxes (0) */
+                flex-shrink: 0;
+            }
+
+            /* Mode filter — hide the inactive box. Specificity 0,0,3,0
+               beats the earlier `.app.page-allshares .drop-zone { display:
+               flex }` re-show rule (0,0,2,0). */
+            .app.page-allshares.mode-send .link-input-container {
+                display: none;
+            }
+            .app.page-allshares.mode-receive .drop-zone {
+                display: none;
+            }
+        }
+
+        /* Mode tab base — hidden by default; only made visible on
+           .app.page-allshares desktop (rule above). */
+        .mode-tabs {
+            display: none;
+        }
+        .mode-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 16px;
+            border: none;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+        .mode-tab:hover:not(.is-active) {
+            color: rgba(255, 255, 255, 0.9);
+        }
+        .mode-tab.is-active {
+            background: rgba(168, 206, 56, 0.2);
+            color: rgba(168, 206, 56, 1);
+        }
+        .mode-tab-icon {
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        /* Draggable title bar region.
+           On desktop-UI, the drag surface is inset from the left by the
+           sidebar's width so it doesn't overlay the sidebar's top strip.
+           Without that inset, `.app-shell` (z-index: 1) traps the sidebar
+           at level 1 in body's root — so drag-region (z-index: 100) is
+           visually on top, and Electron's OS-level drag hit-test wins
+           over the sidebar buttons in the top 35px band. That made the
+           first sidebar item ("All Shares") only clickable below its
+           text. The inset simply removes the drag layer from that area,
+           so nothing overlays the sidebar's top and every button is
+           clickable edge-to-edge. Users can still drag the window from
+           the top of the main column (right of the sidebar). */
         .drag-region {
             position: fixed;
             top: 0;
@@ -80,6 +729,11 @@
             height: 35px;
             -webkit-app-region: drag;
             z-index: 100;
+        }
+        @media (min-width: 600px) {
+            .drag-region {
+                left: 200px; /* Matches .sidebar width */
+            }
         }
 
         /* Header with profile icon */
@@ -146,6 +800,32 @@
 
         #listContainer .drive-item:hover {
             background: rgba(255, 255, 255, 0.08);
+        }
+
+        /* SHARE button rendered inside the drop-zone (desktop Share only).
+           Anchored to bottom-LEFT; layered on top of the drop-zone's text
+           content (z-index ensures it sits above the centered hint). */
+        .drop-zone-share-btn {
+            display: none;
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            flex: 0 0 auto;
+            min-width: 200px;
+            z-index: 3;
+        }
+
+        /* DOWNLOAD button rendered inside the link-input panel (desktop
+           Receive only). Same pattern as .drop-zone-share-btn — absolute
+           bottom-right, layered above the input. */
+        .link-input-download-btn {
+            display: none;
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            flex: 0 0 auto;
+            min-width: 200px;
+            z-index: 3;
         }
 
         /* Compact Drop Zone */
@@ -319,6 +999,10 @@
         /* List menu button (3 dots) */
         .list-menu-container {
             position: relative;
+            /* Stays anchored to the right of the tab bar even when the tabs
+               are hidden (desktop-UI). Avoids the "sucked left" effect that
+               flex space-between gives a lone child. */
+            margin-left: auto;
         }
 
         .list-menu-btn {
@@ -842,9 +1526,25 @@
         .action-btn.download:hover {
             background: rgba(40, 40, 40, 0.7);
             transform: translateY(-2px);
-            box-shadow: 
+            box-shadow:
                 0 6px 24px rgba(0, 0, 0, 0.25),
                 inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        /* Disabled — no link in the input yet. Mirrors SHARE's disabled
+           treatment so both buttons read as locked the same way. */
+        .action-btn.download:disabled {
+            background: rgba(40, 40, 40, 0.35);
+            color: rgba(255, 255, 255, 0.35);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .action-btn.download:disabled:hover {
+            background: rgba(40, 40, 40, 0.35);
+            transform: none;
+            box-shadow: none;
         }
 
         /* Toast Notifications */
@@ -1574,7 +2274,75 @@
         </div>
     </div>
     
+    <!-- =================================================================
+         App shell — wraps the (always-present) sidebar + the main app
+         column. The sidebar is hidden in mobile-UI (<600px) and shown in
+         desktop-UI (≥600px) via the media query below.
+         ================================================================= -->
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="Primary navigation">
+            <nav class="sidebar-nav">
+                <!-- All Shares — default landing tab; pinned at top.
+                     Uses the SHARE layout under the hood (drop zone + SHARE
+                     button). See setActivePage() in renderer.js. -->
+                <button type="button" class="sidebar-nav-item is-active" data-page="allshares">
+                    <span class="sidebar-nav-icon" aria-hidden="true">📁</span>
+                    <span class="sidebar-nav-label">All Shares</span>
+                </button>
+                <button type="button" class="sidebar-nav-item" data-page="share">
+                    <span class="sidebar-nav-icon" aria-hidden="true">📤</span>
+                    <span class="sidebar-nav-label">Shares</span>
+                </button>
+                <button type="button" class="sidebar-nav-item" data-page="receive">
+                    <span class="sidebar-nav-icon" aria-hidden="true">📥</span>
+                    <span class="sidebar-nav-label">Receive</span>
+                </button>
+                <!-- Favorites — visual placeholder, no backend wiring.
+                     Sits directly above the Add Folder CTA. -->
+                <button type="button" class="sidebar-nav-item" data-page="favorites">
+                    <span class="sidebar-nav-icon" aria-hidden="true">⭐</span>
+                    <span class="sidebar-nav-label">Favorites</span>
+                </button>
+                <!-- Add Folder — visual CTA, must always render last in the nav. -->
+                <button type="button" class="sidebar-nav-item sidebar-nav-cta" data-page="addfolder">
+                    <span class="sidebar-nav-icon" aria-hidden="true">+</span>
+                    <span class="sidebar-nav-label">Add Folder</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button type="button" class="sidebar-nav-item" data-page="settings" disabled title="Coming soon">
+                    <span class="sidebar-nav-icon" aria-hidden="true">⚙️</span>
+                    <span class="sidebar-nav-label">Settings</span>
+                </button>
+                <button type="button" class="sidebar-nav-item" data-page="device" disabled title="Coming soon">
+                    <span class="sidebar-nav-icon" aria-hidden="true">📱</span>
+                    <span class="sidebar-nav-label">My Device</span>
+                </button>
+            </div>
+        </aside>
+
     <div class="app">
+        <!-- Page heading — desktop-UI only. -->
+        <header class="page-header">
+            <h1 class="page-title" id="pageTitle">Shares</h1>
+        </header>
+
+        <!-- All Shares mode switch — segmented pill that toggles between
+             the drop-zone (Send) and the link-input pill (Receive). Only
+             shown on the All Shares page in desktop-UI; hidden everywhere
+             else. See setAllsharesMode() in renderer.js. -->
+        <div class="mode-tabs" id="modeTabs" role="tablist" aria-label="All Shares mode">
+            <button type="button" class="mode-tab is-active" data-mode="send" role="tab">
+                <span class="mode-tab-icon" aria-hidden="true">📤</span>
+                <span class="mode-tab-label">Send</span>
+            </button>
+            <button type="button" class="mode-tab" data-mode="receive" role="tab">
+                <span class="mode-tab-icon" aria-hidden="true">📥</span>
+                <span class="mode-tab-label">Receive</span>
+            </button>
+        </div>
+
         <!-- Compact Drop Zone -->
         <div class="drop-zone glass" id="dropZone">
             <div class="drop-content" id="dropContent">
@@ -1590,13 +2358,43 @@
                 </div>
                 <button class="clear-btn" id="clearBtn">Clear</button>
             </div>
+            <!-- Desktop-only: SHARE button rendered as a full-width bottom
+                 rail of the drop-zone panel. Hidden on mobile. -->
+            <button type="button" class="action-btn share drop-zone-share-btn" id="dropZoneShareBtn" disabled>SHARE</button>
         </div>
 
-        <!-- Tab Header -->
+        <!-- Link Input — desktop renders as HERO (input card) + full-width
+             DOWNLOAD rail at the bottom. On mobile the input keeps its
+             original inline appearance; .link-input-field acts as the
+             QR-button positioning context in both layouts. -->
+        <div class="link-input-container">
+            <div class="link-input-field">
+                <input type="text" class="link-input" id="linkInput"
+                       placeholder="Paste peardrop:// link..."
+                       autocomplete="off" spellcheck="false">
+                <button type="button" class="qr-upload-btn" id="qrUploadBtn" title="Scan a QR code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                        <path d="M14 14h3v3h-3z"></path>
+                        <path d="M20 14v3"></path>
+                        <path d="M14 20h3"></path>
+                        <path d="M20 20v1"></path>
+                    </svg>
+                </button>
+            </div>
+            <input type="file" id="qrFileInput" accept="image/*" hidden>
+            <button type="button" class="action-btn download link-input-download-btn" id="linkInputDownloadBtn" disabled>DOWNLOAD</button>
+        </div>
+
+        <!-- Tab Header — mobile-UI navigation between Shares and Receive.
+             In desktop-UI the sidebar takes over the same role; both stay in
+             sync via the page-switch logic in renderer.js. -->
         <div class="tab-bar">
             <div class="tabs">
-                <label class="tab active" id="tabShares">Share History</label>
-                <!-- Future: <button class="tab" id="tabFriends">Friends</button> -->
+                <button type="button" class="tab active" id="tabShares" data-page="share">Shares</button>
+                <button type="button" class="tab" id="tabReceive" data-page="receive">Receive</button>
             </div>
             <div class="list-menu-container">
                 <button class="list-menu-btn" id="listMenuBtn" title="List options">
@@ -1647,31 +2445,17 @@
             <!-- ScrollList renders here -->
         </div>
 
-        <!-- Link Input -->
-        <div class="link-input-container">
-            <input type="text" class="link-input" id="linkInput"
-                   placeholder="Paste peardrop:// link..."
-                   autocomplete="off" spellcheck="false">
-            <button type="button" class="qr-upload-btn" id="qrUploadBtn" title="Scan a QR code">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="7" height="7"></rect>
-                    <rect x="14" y="3" width="7" height="7"></rect>
-                    <rect x="3" y="14" width="7" height="7"></rect>
-                    <path d="M14 14h3v3h-3z"></path>
-                    <path d="M20 14v3"></path>
-                    <path d="M14 20h3"></path>
-                    <path d="M20 20v1"></path>
-                </svg>
-            </button>
-            <input type="file" id="qrFileInput" accept="image/*" hidden>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="actions">
-            <button class="action-btn share" id="shareBtn" disabled>SHARE</button>
-            <button class="action-btn download" id="downloadBtn">DOWNLOAD</button>
+        <!-- Bottom bar — action buttons. The link input lives outside
+             this wrapper (see above, after the drop zone) so it can occupy
+             the same top slot as the drop zone on Receive page. -->
+        <div class="bottom-bar">
+            <div class="actions">
+                <button class="action-btn share" id="shareBtn" disabled>SHARE</button>
+                <button class="action-btn download" id="downloadBtn" disabled>DOWNLOAD</button>
+            </div>
         </div>
     </div>
+    </div><!-- /.app-shell -->
 
     <!-- Share Link Modal -->
     <div class="modal-overlay" id="shareModal">

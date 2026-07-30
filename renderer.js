@@ -95,6 +95,11 @@ let isReorderMode = false;      // Manual reorder mode active
 // View state
 let isExpandedView = false;     // false = compact, true = expanded
 
+// Active page (mirrored across mobile-UI tabs + desktop-UI sidebar).
+// 'share'    → drop zone on top, only type:'share' drives visible
+// 'receive'  → paste-link on top, only type:'download' drives visible
+let currentPage = 'share';
+
 // File thumbnail cache for the expanded drive-item child rows.
 // Keyed by absolute file path → { kind: 'image' | 'icon' | 'none', src: string|null }.
 // Lives for the session; cleared on app restart. Avoids re-IPC on re-expand.
@@ -386,7 +391,46 @@ function clearFiles() {
 function bindButtons() {
     shareBtn.addEventListener('click', startShare);
     downloadBtn.addEventListener('click', startDownload);
-    
+
+    // Desktop Share page renders a second SHARE button inside the drop
+    // zone (.drop-zone-share-btn). Both buttons drive the same flow, so
+    // route its clicks to startShare too — and mirror state changes from
+    // the primary #shareBtn so disabled / label / glow stay in sync.
+    const dropZoneShareBtn = document.getElementById('dropZoneShareBtn');
+    if (dropZoneShareBtn) {
+        dropZoneShareBtn.addEventListener('click', startShare);
+        const syncShareButtons = () => {
+            dropZoneShareBtn.disabled = shareBtn.disabled;
+            dropZoneShareBtn.textContent = shareBtn.textContent;
+            dropZoneShareBtn.classList.toggle('is-ready', shareBtn.classList.contains('is-ready'));
+        };
+        new MutationObserver(syncShareButtons).observe(shareBtn, {
+            attributes: true,
+            attributeFilter: ['disabled', 'class'],
+            childList: true,
+            characterData: true,
+            subtree: true
+        });
+        syncShareButtons(); // initial state pull
+    }
+
+    // Same pattern for the desktop Receive in-panel DOWNLOAD button.
+    const linkInputDownloadBtn = document.getElementById('linkInputDownloadBtn');
+    if (linkInputDownloadBtn) {
+        linkInputDownloadBtn.addEventListener('click', startDownload);
+        const syncDownloadButtons = () => {
+            linkInputDownloadBtn.disabled = downloadBtn.disabled;
+            linkInputDownloadBtn.textContent = downloadBtn.textContent;
+        };
+        new MutationObserver(syncDownloadButtons).observe(downloadBtn, {
+            attributes: true,
+            attributeFilter: ['disabled'],
+            childList: true,
+            characterData: true,
+            subtree: true
+        });
+        syncDownloadButtons();
+    }
 }
 
 function bindInput() {
@@ -395,10 +439,16 @@ function bindInput() {
             startDownload();
         }
     });
-    
+
+    // Mirror the SHARE-when-no-files pattern: DOWNLOAD is disabled while
+    // the link input is empty (mobile + desktop). Programmatic value
+    // changes (e.g. handleScannedLink) must also call updateDownloadButtonState.
+    linkInput.addEventListener('input', updateDownloadButtonState);
+
     // Auto-detect pasted links
     linkInput.addEventListener('paste', () => {
         setTimeout(() => {
+            updateDownloadButtonState();
             const val = linkInput.value.trim();
             if (val.startsWith('peardrop://')) {
                 // Visual feedback
@@ -409,6 +459,17 @@ function bindInput() {
             }
         }, 50);
     });
+
+    // Set initial state — input starts empty so button starts disabled.
+    updateDownloadButtonState();
+}
+
+// Disables #downloadBtn while the link input is empty (after trim). The
+// in-panel #linkInputDownloadBtn mirrors disabled via the MutationObserver
+// in bindButtons, so this single call covers both layouts.
+function updateDownloadButtonState() {
+    if (!downloadBtn || !linkInput) return;
+    downloadBtn.disabled = linkInput.value.trim().length === 0;
 }
 
 function bindQrUpload() {
@@ -423,6 +484,7 @@ function handleScannedLink(text) {
         return;
     }
     linkInput.value = text;
+    updateDownloadButtonState();
     linkInput.classList.add('flash');
     setTimeout(() => linkInput.classList.remove('flash'), 500);
     showToast('Link captured', 'success');
@@ -816,6 +878,12 @@ function addDriveToList(drive, options = {}) {
     });
     console.log('[addDriveToList] scrollList.addItem result:', result?.id, 'component:', !!result?.component);
 
+    // Tag the slot with its drive type so the page-switch CSS filter can
+    // show/hide it via .view-share / .view-receive on the list container.
+    if (result && result.slot) {
+        result.slot.dataset.type = drive.type === 'download' ? 'download' : 'share';
+    }
+
     // If we have a non-recent sort active, re-apply sorting
     // (but new items still briefly appear at top, then sort into place)
     if (sortField !== 'recent' && sortField !== 'custom') {
@@ -1046,7 +1114,11 @@ function normalizeDrive(drive) {
         progress: drive.progress,
         speed: drive.speed,
         peers: drive.peers || 0,
-        type: drive.type || 'share',
+        // Backend canonically uses `isUpload` (true for shares, false for
+        // downloads); prefer an explicit `.type` if one is passed but fall
+        // back to deriving from isUpload so the Share/Receive split filter
+        // actually separates them (was defaulting everything to 'share').
+        type: drive.type || (drive.isUpload === false ? 'download' : 'share'),
         shareLink: drive.shareLink
     };
 }
@@ -2127,9 +2199,118 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Tab clicks (future: switch between Shares/Friends)
-tabShares.addEventListener('click', () => {
-    // Already active, but ready for tab switching logic
+// ============================================================================
+// PAGE SWITCH — Shares vs Receive
+// Mobile-UI: top tab bar (tabShares / tabReceive)
+// Desktop-UI: sidebar nav (.sidebar-nav-item[data-page])
+// Both routes call setActivePage(name); the data-type filter on the list and
+// the top-bar swap (drop zone vs paste link) are CSS-driven.
+// ============================================================================
+const tabReceive = document.getElementById('tabReceive');
+const appShellEl = document.querySelector('.app-shell');
+const appEl = document.querySelector('.app');
+
+function setActivePage(page) {
+    if (page !== 'share' && page !== 'receive' && page !== 'allshares') return;
+    if (page === currentPage) return;
+    currentPage = page;
+
+    // "allshares" reuses the SHARE tab's layout (drop-zone visible, SHARE
+    // button visible) — only the sidebar-active state and page heading
+    // differ. The rest of the code below computes classes from this
+    // effective-layout choice, not from `page` directly.
+    const layoutPage = page === 'allshares' ? 'share' : page;
+
+    // Sidebar active state — only touches share/receive/allshares nav items
+    // so unrelated items (Favorites, Settings, etc.) keep their own state.
+    document.querySelectorAll('.sidebar-nav-item[data-page="share"], .sidebar-nav-item[data-page="receive"], .sidebar-nav-item[data-page="allshares"]').forEach((btn) => {
+        if (btn.disabled) return;
+        btn.classList.toggle('is-active', btn.dataset.page === page);
+    });
+
+    // Desktop-UI page heading
+    const titleEl = document.getElementById('pageTitle');
+    if (titleEl) {
+        titleEl.textContent =
+            page === 'allshares' ? 'All Shares' :
+            page === 'receive' ? 'Receive' : 'Shares';
+    }
+
+    // Mobile tab active state (mobile has no All Shares tab; treat it like
+    // share so the "Shares" tab lights up).
+    if (tabShares) tabShares.classList.toggle('active', layoutPage === 'share');
+    if (tabReceive) tabReceive.classList.toggle('active', layoutPage === 'receive');
+
+    // CSS-based filter on the drives list. Note this is SEPARATE from the
+    // layout page — All Shares uses the SHARE layout but must show BOTH
+    // shares and downloads, so it applies no filter class (nothing hidden).
+    if (listContainer) {
+        listContainer.classList.remove('view-share', 'view-receive', 'view-all');
+        if (page === 'allshares') {
+            listContainer.classList.add('view-all');
+        } else {
+            listContainer.classList.add(layoutPage === 'share' ? 'view-share' : 'view-receive');
+        }
+    }
+
+    // Page class on .app — drives the top-bar swap and per-page action button.
+    // All Shares applies BOTH page-share AND page-receive so every existing
+    // desktop layout rule (drop-zone hero-rail AND link-input pill) fires,
+    // and adds page-allshares as a marker for the one override rule that
+    // re-shows the drop-zone (which page-receive normally hides).
+    if (appEl) {
+        appEl.classList.remove('page-share', 'page-receive', 'page-allshares');
+        if (page === 'allshares') {
+            appEl.classList.add('page-share', 'page-receive', 'page-allshares');
+        } else {
+            appEl.classList.add(layoutPage === 'share' ? 'page-share' : 'page-receive');
+        }
+    }
+}
+
+// Wire mobile tabs
+[tabShares, tabReceive].forEach((tab) => {
+    if (!tab) return;
+    tab.addEventListener('click', () => setActivePage(tab.dataset.page));
 });
+
+// Wire desktop sidebar
+document.querySelectorAll('.sidebar-nav-item').forEach((btn) => {
+    if (btn.disabled) return;
+    btn.addEventListener('click', () => {
+        const page = btn.dataset.page;
+        if (page === 'share' || page === 'receive' || page === 'allshares') setActivePage(page);
+    });
+});
+
+// ============================================================================
+// All Shares mode switch — segmented pill above the boxes on the All Shares
+// page that toggles between the drop-zone (send) and the link-input pill
+// (receive). Persisted on .app as .mode-send / .mode-receive; the classes
+// have no effect unless .page-allshares is also present, so switching to
+// Share/Receive tabs leaves the mode intact for next return to All Shares.
+// ============================================================================
+function setAllsharesMode(mode) {
+    if (!appEl) return;
+    if (mode !== 'send' && mode !== 'receive') return;
+    appEl.classList.remove('mode-send', 'mode-receive');
+    appEl.classList.add(mode === 'send' ? 'mode-send' : 'mode-receive');
+    document.querySelectorAll('.mode-tab').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.dataset.mode === mode);
+    });
+}
+document.querySelectorAll('.mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setAllsharesMode(btn.dataset.mode));
+});
+setAllsharesMode('send'); // default
+
+// Initial page — "All Shares" is the default landing tab. setActivePage
+// applies every class needed (page-share on .app, view-all on the list
+// container, sidebar-active on the nav item), so no fallback class-adds
+// afterward — the old fallback only knew about view-share/view-receive
+// and was re-adding view-share on top of view-all, which then hid every
+// download on cold start.
+setActivePage('allshares');
 
 // ============================================================================
 // DEBUG UTILITIES

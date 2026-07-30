@@ -100,20 +100,76 @@ let mainWindow;
 // App configuration
 const APP_DATA_DIR = join(os.homedir(), 'peardrop');
 const DOWNLOADS_DIR = join(APP_DATA_DIR, 'downloads');
+const WINDOW_STATE_FILE = join(APP_DATA_DIR, 'window-state.json');
+
+// ============================================================================
+// Window state persistence — remembers the last window size/position/
+// maximized state so mobile-UI vs desktop-UI (a purely size-based decision)
+// stays consistent across sessions. State is saved on resize/move (debounced)
+// and on close.
+// ============================================================================
+let windowStateSaveTimer = null;
+
+function loadWindowState() {
+    try {
+        const raw = require('fs').readFileSync(WINDOW_STATE_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.width === 'number' && typeof parsed.height === 'number') {
+            return parsed;
+        }
+    } catch {
+        // Missing / corrupt / first launch — fall through to defaults.
+    }
+    return null;
+}
+
+function saveWindowState() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+        const isMaximized = mainWindow.isMaximized();
+        // If maximized, save the pre-maximize bounds so restoring a
+        // maximized window still remembers a reasonable size.
+        const bounds = isMaximized ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+        const state = {
+            width: bounds.width,
+            height: bounds.height,
+            x: bounds.x,
+            y: bounds.y,
+            isMaximized
+        };
+        require('fs').writeFileSync(WINDOW_STATE_FILE, JSON.stringify(state, null, 2));
+    } catch (err) {
+        console.error('[PearDrop] Failed to save window state:', err.message);
+    }
+}
+
+function scheduleWindowStateSave() {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = setTimeout(saveWindowState, 300);
+}
 
 // ============================================================================
 // Window Management
 // ============================================================================
 
 function createWindow() {
+    // Restore last-session window bounds if we have them.
+    const savedState = loadWindowState();
+
     // Platform-specific window options
     const windowOptions = {
-        width: 415,
-        height: 830,
-        minWidth: 450,
+        width: savedState?.width || 415,
+        height: savedState?.height || 830,
+        // x/y only applied when a saved state exists — otherwise we let
+        // the OS place the window and the ready-to-show handler nudges
+        // it to the right side of the primary display.
+        ...(savedState && typeof savedState.x === 'number' && typeof savedState.y === 'number'
+            ? { x: savedState.x, y: savedState.y }
+            : {}),
+        minWidth: 380,
         minHeight: 450,
-        maxWidth: 480,
-        maxHeight: 1000,
+        // maxWidth / maxHeight intentionally removed so the user can
+        // stretch the window into desktop-UI (>= 800px).
         resizable: true,
         webPreferences: {
             nodeIntegration: false,
@@ -150,14 +206,27 @@ function createWindow() {
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
-        
-        // Position on right side of screen
-        const { screen } = require('electron');
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width: screenWidth } = primaryDisplay.workAreaSize;
-        const [winWidth] = mainWindow.getSize();
-        mainWindow.setPosition(screenWidth - winWidth - 20, 80);
+
+        // First launch (no saved state): position on right side of primary
+        // display. On subsequent launches, respect the restored x/y instead.
+        if (!savedState) {
+            const { screen } = require('electron');
+            const primaryDisplay = screen.getPrimaryDisplay();
+            const { width: screenWidth } = primaryDisplay.workAreaSize;
+            const [winWidth] = mainWindow.getSize();
+            mainWindow.setPosition(screenWidth - winWidth - 20, 80);
+        } else if (savedState.isMaximized) {
+            mainWindow.maximize();
+        }
     });
+
+    // Persist window size/position — debounced during interaction, saved
+    // definitively on close.
+    mainWindow.on('resize', scheduleWindowStateSave);
+    mainWindow.on('move', scheduleWindowStateSave);
+    mainWindow.on('maximize', saveWindowState);
+    mainWindow.on('unmaximize', saveWindowState);
+    mainWindow.on('close', saveWindowState);
 
     if (process.argv.includes('--dev')) {
         mainWindow.webContents.openDevTools({ mode: 'detach' });
