@@ -552,27 +552,54 @@ async function startShare() {
 }
 
 async function startDownload() {
-    const link = linkInput.value.trim();
-    
-    // No link? Flash the input
-    if (!link) {
+    const rawInput = linkInput.value.trim();
+
+    // Nothing pasted? Flash + focus, no toast (silent for empty input).
+    if (!rawInput) {
         linkInput.classList.add('flash');
         linkInput.focus();
         setTimeout(() => linkInput.classList.remove('flash'), 500);
         return;
     }
-    
-    // Invalid format? Flash
-    if (!link.startsWith('peardrop://')) {
+
+    // Extract a clean `peardrop://<64 hex>` link from the pasted text —
+    // guards against the common case of copying multi-line CLI output
+    // ("LINK: peardrop://…\nID: drive_…") into the input, which used to
+    // sneak past `startsWith('peardrop://')` and blow up in the engine
+    // with a silent "Invalid share link" that showed the user nothing.
+    const match = rawInput.match(/peardrop:\/\/[a-f0-9]{64}/i);
+    const link = match ? match[0] : null;
+
+    if (!link) {
         linkInput.classList.add('flash');
         setTimeout(() => linkInput.classList.remove('flash'), 500);
+        if (rawInput.toLowerCase().startsWith('peardrop://')) {
+            showToast('Invalid link — the key after peardrop:// must be exactly 64 hex characters.', 'error');
+        } else {
+            showToast('Not a peardrop:// link. Paste the full link starting with peardrop://', 'error');
+        }
         return;
     }
-    
+
+    // If the input had junk but we recovered a link, tell the user we
+    // salvaged it — helps them realize they pasted extra text next time.
+    if (link !== rawInput) {
+        console.log('[PearDrop] Extracted link from polluted input:', link);
+    }
+
     linkInput.value = '';
-    
-    // 1. Check for duplicate (fast local check)
-    const dupCheck = await window.electronAPI.hyperdriveCheckDuplicate({ shareLink: link });
+
+    // 1. Check for duplicate (fast local check). Wrap in try/catch — a
+    //    thrown IPC error here would otherwise be silently lost to the
+    //    Promise rejection with no user feedback.
+    let dupCheck;
+    try {
+        dupCheck = await window.electronAPI.hyperdriveCheckDuplicate({ shareLink: link });
+    } catch (err) {
+        console.error('[PearDrop] Duplicate check failed:', err);
+        showToast('Could not start download: ' + (err.message || 'engine error'), 'error');
+        return;
+    }
     
     if (dupCheck.isDuplicate) {
         highlightExistingDrive(dupCheck.driveId);
@@ -595,10 +622,20 @@ async function startDownload() {
     console.log('[PearDrop] Added to list, driveItems size:', driveItems.size);
     
     // 3. Open drive (skip duplicate check since we already did it)
-    const openResult = await window.electronAPI.hyperdriveOpen({ shareLink: link, forceOpen: true });
-    
+    let openResult;
+    try {
+        openResult = await window.electronAPI.hyperdriveOpen({ shareLink: link, forceOpen: true });
+    } catch (err) {
+        console.error('[PearDrop] hyperdriveOpen threw:', err);
+        openResult = { success: false, error: err.message || 'engine error' };
+    }
+
     if (!openResult.success) {
         updateDriveInList({ id: tempId, status: 'error' });
+        // Surface the engine's actual reason to the user. Was silently
+        // swallowed before — the row briefly appeared as "Connecting…",
+        // auto-removed after 5s, and the user had no idea why.
+        showToast('Download failed: ' + (openResult.error || 'unknown error'), 'error');
         setTimeout(() => removeDriveFromList(tempId, { animate: true }), 5000);
         return;
     }
@@ -1262,6 +1299,35 @@ function bindIPC() {
                     addDriveToList(normalized, { animate: true });
                 }
             }
+        }
+    });
+
+    // Drive resume failed (new in unified engine 0.24.0) — the engine gave up
+    // on resuming an interrupted drive. Flip the display to inactive so the
+    // user sees the failure instead of a stuck "resuming" spinner.
+    window.electronAPI.onDriveResumeFailed?.((event, data) => {
+        if (!data || !data.driveId) return;
+        console.log('[PearDrop] drive-resume-failed:', data.driveId, data.error);
+        const existing = drives.find(d => d.id === data.driveId);
+        if (existing) {
+            updateDriveInList({ id: data.driveId, status: 'inactive' });
+        }
+    });
+
+    // Resumed drive ready to continue download (new in unified engine 0.24.0)
+    // — an interrupted download reconnected to the sender and can now finish.
+    // Kick the same handleDownload path used for fresh downloads.
+    window.electronAPI.onDriveReadyToDownload?.((event, data) => {
+        if (!data || !data.driveId) return;
+        const { driveId, shareLink, shareName } = data;
+        console.log('[PearDrop] drive-ready-to-download:', driveId);
+        updateDriveInList({
+            id: driveId,
+            status: 'downloading',
+            title: shareName || 'Download'
+        });
+        if (typeof handleDownload === 'function') {
+            handleDownload(driveId, shareLink);
         }
     });
 }

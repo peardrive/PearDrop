@@ -2569,6 +2569,12 @@
     </div>
 
     <!-- Load modules -->
+    <!-- ui-utils MUST come first — drive-item and drive-info-panel delegate
+         to window.PearUtils for formatBytes / escapeHtml / getFileIcon. -->
+    <script src="lib/ui-utils.js"></script>
+    <script src="lib/selection-logic.js"></script>
+    <script src="lib/status-mapping.js"></script>
+    <script src="lib/dup-check-action.js"></script>
     <script src="lib/scroll-list/scroll-list.js"></script>
     <script src="lib/drive-item/drive-item.js"></script>
     <script src="lib/drive-item/drive-info-panel.js"></script>

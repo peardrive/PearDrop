@@ -2,49 +2,40 @@
  * MODULE: preload.js
  * PURPOSE: Secure IPC bridge between renderer and main process
  * VERSION: 0.19.1
- * 
  * EXPORTS (via window.electronAPI):
  *   INVOKE (renderer -> main):
  *     Hyperdrive:
- *       - hyperdriveShare(data) - Create share from files
- *       - hyperdriveStop(data) - Stop sharing
- *       - hyperdriveOpen(data) - Open remote drive
- *       - hyperdriveDownload(data) - Download from opened drive
- *       - hyperdriveAbort(data) - Abort pending connection
- *       - hyperdriveStatus() - Get drive stats
- *     
- *     HyperdriveManager (single source of truth):
- *       - drivesList() - Get all drives
- *       - drivesPause(data) - Pause seeding (keep data)
- *       - drivesResume(data) - Resume seeding
- *       - drivesRemove(data) - Remove drive completely
- *       - drivesCheckFiles() - Check local file availability
- *       - driveGet(id) - Get drive info by ID
- *     
+ * hyperdriveShare(data) - Create share from files
+ * hyperdriveCheckDuplicate(data) - Fast local duplicate check
+ * hyperdriveOpen(data) - Open remote drive
+ * hyperdriveDownload(data) - Download from opened drive
+ *     Drive list (HyperdriveManager + drives-state.json):
+ * drivesList() - Get all drives
+ * drivesPause(id | {id}) - Pause seeding (keep data)
+ * drivesResume(id | {id}) - Resume seeding (rejoins swarm)
+ * drivesRemove(id | {id, deleteFiles}) - Remove drive completely
  *     Utilities:
- *       - openDownloads() - Open downloads folder
- *       - openFile(filePath) - Open file in default app
- *       - showFileInFolder(filePath) - Show file in Finder/Explorer
- *       - getFilesStats(paths) - Get file/folder stats
- *       - generateQr(text) - Generate QR data URL for a string
- *       - getAppVersion() - Get app version (for reset notice gating)
- *       - checkLegacyDataPresent() - Detect pre-unified state files
- *       - getFileThumbnail(filePath) - Image src or OS icon for a file
- *
+ * openDownloads() - Open downloads folder
+ * openFile(filePath) - Open file in default app
+ * showFileInFolder(filePath) - Show file in Finder/Explorer
+ * driveGet(id) - Get single drive by ID (drive-actions open/show)
+ * getFilesStats(paths) - Get file/folder stats
+ * generateQr(text) - Generate QR data URL for a string
+ * getAppVersion() - Get app version (for reset notice gating)
+ * checkLegacyDataPresent() - Detect pre-unified state files
+ * getFileThumbnail(filePath) - Image src or OS icon for a file
  *     Debug:
- *       - getDebug() - Get current debug state
- *       - setDebug(enabled) - Set debug state (persists to config)
- * 
+ * getDebug() - Get current debug state
+ * setDebug(enabled) - Set debug state (persists to config)
  *   LISTENERS (main -> renderer):
- *     - onFilesDownloaded(cb) - Download complete
- *     - onPeerConnected(cb) - Peer joined
- *     - onPeerDisconnected(cb) - Peer left
- *     - onUploadProgress(cb) - Transfer progress
- *     - onUploadComplete(cb) - Transfer complete
- *     - onDownloadProgress(cb) - Download progress
- *     - onDownloadPeerDisconnected(cb) - Sender went offline
- *     - onDrivesUpdated(cb) - Drive added/removed/updated
- * 
+ * onFilesDownloaded(cb) - Download complete
+ * onPeerConnected(cb) - Peer joined
+ * onPeerDisconnected(cb) - Peer left
+ * onUploadProgress(cb) - Transfer progress
+ * onUploadComplete(cb) - Transfer complete
+ * onDownloadPeerDisconnected(cb) - Sender went offline
+ * onDriveReadyToDownload(cb) - Resumed drive ready to continue download
+ * onDrivesUpdated(cb) - Drive added/removed/updated
  * EXTERNAL CALLS: Electron contextBridge, ipcRenderer
  */
 const { contextBridge, ipcRenderer } = require('electron');
@@ -54,22 +45,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Hyperdrive operations
     // ========================================================================
     hyperdriveShare: (data) => ipcRenderer.invoke('hyperdrive-share', data),
-    hyperdriveStop: (data) => ipcRenderer.invoke('hyperdrive-stop', data),
     hyperdriveCheckDuplicate: (data) => ipcRenderer.invoke('hyperdrive-check-duplicate', data),
     hyperdriveOpen: (data) => ipcRenderer.invoke('hyperdrive-open', data),
     hyperdriveDownload: (data) => ipcRenderer.invoke('hyperdrive-download', data),
-    hyperdriveAbort: (data) => ipcRenderer.invoke('hyperdrive-abort', data || {}),
-    hyperdriveStatus: () => ipcRenderer.invoke('hyperdrive-status'),
-    
+
     // ========================================================================
     // HyperdriveManager - Single source of truth for Shares tab
     // ========================================================================
     drivesList: () => ipcRenderer.invoke('drives-list'),
-    drivesPause: (data) => ipcRenderer.invoke('drives-pause', data),
-    drivesResume: (data) => ipcRenderer.invoke('drives-resume', data),
-    drivesRemove: (data) => ipcRenderer.invoke('drives-remove', data),
-    drivesCheckFiles: () => ipcRenderer.invoke('drives-check-files'),
-    
+    // NORMALIZED (2026-07-03): callers historically passed either a bare id
+    // string or an {id} object while main always destructures {id} — the
+    // mismatch made Pause/Resume silent no-ops ({id: undefined}). The bridge
+    // now accepts both shapes so the contract can't silently drift again.
+    drivesPause: (idOrData) => ipcRenderer.invoke('drives-pause',
+        typeof idOrData === 'string' ? { id: idOrData } : idOrData),
+    drivesResume: (idOrData) => ipcRenderer.invoke('drives-resume',
+        typeof idOrData === 'string' ? { id: idOrData } : idOrData),
+    drivesRemove: (idOrData) => ipcRenderer.invoke('drives-remove',
+        typeof idOrData === 'string' ? { id: idOrData } : idOrData),
+
     // ========================================================================
     // Utilities
     // ========================================================================
@@ -110,7 +104,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onPeerDisconnected: (callback) => ipcRenderer.on('peer-disconnected', callback),
     onUploadProgress: (callback) => ipcRenderer.on('upload-progress', callback),
     onUploadComplete: (callback) => ipcRenderer.on('upload-complete', callback),
-    onDownloadProgress: (callback) => ipcRenderer.on('download-progress', callback),
     onDownloadPeerDisconnected: (callback) => ipcRenderer.on('download-peer-disconnected', callback),
-    onDrivesUpdated: (callback) => ipcRenderer.on('drives-updated', callback)
+    onDriveReadyToDownload: (callback) => ipcRenderer.on('drive-ready-to-download', callback),
+    onDrivesUpdated: (callback) => ipcRenderer.on('drives-updated', callback),
+    // Runtime resume-failure signal (boot-time failures also travel in the
+    // drives-updated action:'loaded' payload; this channel exists for post-init
+    // failures and future-proofing).
+    onDriveResumeFailed: (callback) => ipcRenderer.on('drive-resume-failed', callback)
 });
