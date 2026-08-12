@@ -2,6 +2,133 @@
 
 ---
 
+## 🎨 DESKTOP REDESIGN v2 — In Progress (LOCAL AGENT NOTES)
+
+**Scope:** desktop-only (`≥ 600px` breakpoint). Mobile UI is untouched and
+we reconcile the two layouts *later*. Engine, IPC contract, sacred core:
+all off-limits — pure UI reskin against the existing renderer.js hooks.
+
+Reference: Figma frames sent by Amir (Mac window mockups, dark theme).
+Traffic lights in the mockups are Cocoa chrome — on the real Windows
+build we get standard caption controls, don't draw fake window chrome.
+
+### Structural pivot from current build
+
+- **KILL the left sidebar.** New layout puts nav at the top of the window:
+    - Top-left: **Shares** / **Favorites** tabs (underlined active state)
+    - Top-right: **↑ Send** and **↓ Receive** green-outline pill buttons
+    - Far-right: dark circular **⚙ Settings** button
+- **Search bar** full width below the tab row, with **filter (▼)** and
+  **3-dot list-options** on its right edge
+- **Send / Receive are MODALS**, not persistent panels — click Send →
+  overlay with Add Files hero card + Recent Shares; click Receive →
+  overlay with Paste input + QR scan area
+- **Settings and Report-a-bug are FULL PAGES** (route replacements),
+  not modals — back-arrow at top-left returns to main
+- **Folder click → modal** showing the folder's contents in the same
+  two-column card grid
+
+### Screen inventory (18 total)
+
+1. Splash — logo only
+2. Splash — logo + wordmark
+3. Onboarding — "Share anything" (dot 1/3)
+4. Onboarding — "Fully private" (dot 2/3)
+5. Onboarding — "You're all set" (dot 3/3, Get Started)
+6. Error — "No connection" (amber, Retry)
+7. Error — "Peer not found" (amber, Go back)
+8. Error — "File unavailable" (red, Dismiss)
+9. Error — "Something went wrong" (Restart app / Send crash report)
+10. Confirmation — "Report sent" (green, Done)
+11. Shares tab — empty state ("Nothing shared yet")
+12. Shares tab — populated (two-column card grid)
+13. Shares tab — populated (table view: Name / Type / Size / Status)
+14. Send modal — Add Files hero + Recent Shares list
+15. Share Link modal — QR + peardrop:// text + Copy Link / Done
+16. Multi-file selection modal — checkboxes + Grab button
+17. Receive modal — Paste input + QR Code Scan area + Import QR image
+18. 3-dot context menu — Add to Favorites / Copy Link / Show QR / Edit / Properties / Stop sharing
+19. File info modal — Details + Share info + Copy Link
+20. Favorites tab — empty state ("Nothing pinned yet")
+21. Favorites tab — populated (same two-column grid as Shares)
+22. Folder-open modal — folder header + Copy Link + inner two-column list
+23. Download complete toast (bottom-right, "Detail" link)
+24. Settings page — user + Appearance + Support sections
+25. Report a bug page — form + Attach device info toggle + Send Report
+
+### Design tokens (from mockups)
+
+- Bg: near-black (~#0A0A0A), NO glass panels visible in the mockups —
+  this is a departure from current build's glassmorphism. Verify
+  whether Amir wants glass removed entirely or kept lightly.
+- Accent green: pear-green (~#A8CE38 range), same as before
+- Buttons:
+    - **Primary filled** — green-gradient pill, dark text
+    - **Primary outline** — transparent bg, green border + green text
+    - **Secondary** — dark filled outline, muted text
+    - **Destructive** — red variant (outline for "Dismiss", solid for "Retry")
+    - **Warning** — amber variant
+- Corner radii: cards ~12px, buttons ~999px (full pill)
+- State icon container (used in error/onboarding screens): rounded-square
+  ~100×100, subtle inner shadow, dark-tinted bg, monochrome icon inside
+  color-coded by severity (green/amber/red)
+- Typography: bold white titles ~24–28px, muted grey body ~14–16px
+- **Colored badges** for status: green "Active" / "Completed", amber
+  "Sharing (98%)", red "Failed" / "Inactive"
+- Favorite star: filled gold ★
+
+### List row anatomy (populated tabs)
+
+- Left thumbnail (~56×56, rounded corner) — file preview, video icon, or
+  folder icon (teal folder color for folders)
+- Middle: filename (bold), then muted metadata + status badge
+- Right: contextual action — X (in-progress cancel), Retry (failed),
+  Open (completed), or 3-dot menu
+
+### Design rules to always follow
+
+- **Canonical modal appearance**: ALL modal windows on desktop share
+  ONE rule (`.modal-overlay .modal`) that sets width **760px**,
+  min-height **520px**, iOS-frosted-glass fill (`rgba(46,48,55,0.35)` +
+  `backdrop-filter: blur(40px) saturate(180%)`), rounded 22px corners,
+  soft border + drop shadow. Critical: the `.modal-overlay` MUST NOT
+  have its own `backdrop-filter` — the modal's blur then has nothing
+  meaningful to blur (already-blurred backdrop) and reads as flat. Keep
+  the overlay as `background: rgba(0,0,0,0.35)` only.
+  Do NOT set per-modal `max-width`, `min-height`, `background`,
+  `border`, or `border-radius`. QR scanner modal is explicitly the same
+  width even though it needs vertical room. Amir called this out
+  multiple times — don't drift.
+- **Palette (v2)**:
+  - `body` background: pure onyx black `#000000`
+  - `.app` content panel: dark grey `#1a1a20`  (matches active tab)
+  - Tab container fill (`.top-tabs`): lighter grey `#2e2e34`
+  - Active tab fill: `#1a1a20` (blends into panel)
+  - Inactive tab fill: transparent (blends into container)
+- **Tabs are a segmented control**: single container with rounded
+  corners; active button has content-panel color; inactive is
+  transparent so it fades into the container. No pseudo-element
+  flares, no SVG connectors. N-tab friendly.
+- **Border weight**: iOS-style — outlined buttons/inputs/cards use
+  **2px borders**, not 1 or 1.5px. Font weights on outlined buttons
+  are **700** (bold), not 500-600. Amir called out that iOS looks
+  "simple but bold" — thin borders + regular weight read as flat.
+
+### Out of scope (do NOT touch during redesign)
+
+- `main.js`, `preload.js`, any `lib/*.js` engine files, IPC contract,
+  sacred-core rules from the section below
+- Mobile-UI (anything not inside `@media (min-width: 600px)`)
+- Window-state persistence, All Shares tab wiring — those stay
+  functionally but visual chrome will change with the new layout
+
+### Task tracker
+
+Working through the screen inventory in order. See TodoWrite state for
+current step. Commit after each meaningful screen.
+
+---
+
 ## 🚨 SACRED CORE — DO NOT TOUCH 🚨
 
 **The basic download MUST ALWAYS WORK.** This is non-negotiable.

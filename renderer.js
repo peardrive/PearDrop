@@ -2379,6 +2379,493 @@ setAllsharesMode('send'); // default
 setActivePage('allshares');
 
 // ============================================================================
+// DESKTOP v2 SHELL — top-bar tabs (Shares / Favorites) and Send / Receive /
+// gear buttons. Visual shell only for now — modals and full behavior come
+// in later steps. Kept lightweight so this file doesn't grow before we
+// actually know the modal contract.
+// ============================================================================
+(function bindDesktopTopBarV2() {
+    const tabs = document.querySelectorAll('.top-tab');
+    tabs.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const target = btn.dataset.tab;
+            if (!target) return;
+            tabs.forEach((t) => {
+                const isActive = t.dataset.tab === target;
+                t.classList.toggle('is-active', isActive);
+                t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            });
+            // TODO: filter the drives list by tab (shares vs favorites).
+            // Favorites requires a `favorite` flag on drive entries which
+            // the backend does not track yet — hooked up when that lands.
+        });
+    });
+
+    // Send modal wiring — two-state flow:
+    //   State A: Add Files hero card. Click → open native file picker
+    //            (modal stays open). Picker returns → activeFiles gets
+    //            populated by handleFiles → we render State B into the
+    //            same modal.
+    //   State B: file list + Share button. Click Share → startShare()
+    //            fires, existing shareModal appears with QR + link,
+    //            Send modal closes.
+    const sendBtn = document.getElementById('topSendBtn');
+    const sendModalOverlay = document.getElementById('sendModalOverlay');
+    const sendModalClose = document.getElementById('sendModalCloseBtn');
+    const sendAddFilesCard = document.getElementById('sendAddFilesCard');
+    const sendFileReview = document.getElementById('sendFileReview');
+    const sendFileReviewTitle = document.getElementById('sendFileReviewTitle');
+    const sendFileReviewList = document.getElementById('sendFileReviewList');
+    const sendFileReviewClearBtn = document.getElementById('sendFileReviewClearBtn');
+    const sendShareBtn = document.getElementById('sendShareBtn');
+    const sendModalInner = sendModalOverlay?.querySelector('.send-modal');
+
+    function fmtBytes(n) {
+        if (!n || n <= 0) return '0 B';
+        const u = ['B','KB','MB','GB','TB'];
+        let i = 0, v = n;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+    }
+    function iconForType(f) {
+        const n = (f?.name || '').toLowerCase();
+        if (f?.fileCount > 0 || f?.type === 'folder') return '📁';
+        if (/\.(png|jpg|jpeg|gif|webp|bmp|svg|heic)$/.test(n)) return '🖼️';
+        if (/\.(mp4|mov|avi|mkv|webm)$/.test(n)) return '🎬';
+        if (/\.(mp3|wav|flac|m4a|ogg)$/.test(n)) return '🎵';
+        if (/\.(zip|rar|7z|tar|gz)$/.test(n)) return '🗜️';
+        if (/\.(pdf)$/.test(n)) return '📄';
+        return '📎';
+    }
+
+    function escapeHtml(s) {
+        return (s || '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+    }
+
+    function renderSendFileReview() {
+        if (!sendFileReview || !sendFileReviewList || !sendFileReviewTitle) return;
+        // `activeFiles` is a top-level renderer.js var populated by handleFiles.
+        const files = (typeof activeFiles !== 'undefined' && Array.isArray(activeFiles)) ? activeFiles : [];
+        if (files.length === 0) {
+            sendFileReview.classList.remove('active');
+            sendModalInner?.classList.remove('has-files');
+            return;
+        }
+        const total = files.reduce((s, f) => s + (f.size || 0), 0);
+        sendFileReviewTitle.textContent = files.length === 1
+            ? `1 file · ${fmtBytes(total)}`
+            : `${files.length} files · ${fmtBytes(total)}`;
+        // Each row gets a Cancel-send button that removes just that file.
+        // data-idx targets the array index; click handler is attached
+        // below via delegation for the whole list.
+        sendFileReviewList.innerHTML = files.map((f, i) => `
+            <div class="send-file-review-item">
+                <div class="send-file-review-item-icon" aria-hidden="true">${iconForType(f)}</div>
+                <div class="send-file-review-item-info">
+                    <div class="send-file-review-item-name">${escapeHtml(f.name)}</div>
+                    <div class="send-file-review-item-size">${f.fileCount > 1 ? f.fileCount + ' files · ' : ''}${fmtBytes(f.size)}</div>
+                </div>
+                <button type="button" class="send-file-review-item-cancel" data-idx="${i}" title="Cancel send for this file">
+                    <span class="send-file-review-item-cancel-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </span>
+                    Cancel send
+                </button>
+            </div>
+        `).join('');
+        sendFileReview.classList.add('active');
+        sendModalInner?.classList.add('has-files');
+    }
+
+    // Delegated click handler for per-file Cancel-send buttons.
+    if (sendFileReviewList) {
+        sendFileReviewList.addEventListener('click', (e) => {
+            const btn = e.target.closest('.send-file-review-item-cancel');
+            if (!btn) return;
+            const idx = parseInt(btn.dataset.idx, 10);
+            if (typeof activeFiles === 'undefined' || !Array.isArray(activeFiles)) return;
+            if (Number.isNaN(idx) || idx < 0 || idx >= activeFiles.length) return;
+            activeFiles.splice(idx, 1);
+            // If no files left, also reset the hidden drop-zone preview
+            // state so the SHARE button (which mirrors activeFiles) disables.
+            if (activeFiles.length === 0 && typeof clearFiles === 'function') {
+                clearFiles();
+            }
+            renderSendFileReview();
+        });
+    }
+
+    // ---- Recent Shares (2-column grid, capped at 4) ----
+    // Renders under the primary action in the Send modal. Populated from
+    // the top-level `drives` array filtered to type='share'. Cap at 4
+    // matches the Figma (fits cleanly in a 2×2 grid). Each item shows
+    // a real file thumbnail (fetched via getFileThumbnail IPC — falls
+    // back to a type-emoji if no path/preview available) + a two-line
+    // info block (filename + "type · status" subtitle) + Link button.
+    function categoryFromName(name) {
+        const n = (name || '').toLowerCase();
+        if (/\.(png|jpg|jpeg|gif|webp|bmp|svg|heic)$/.test(n)) return 'Picture';
+        if (/\.(mp4|mov|avi|mkv|webm)$/.test(n)) return 'Video';
+        if (/\.(mp3|wav|flac|m4a|ogg)$/.test(n)) return 'Music';
+        if (/\.(pdf)$/.test(n)) return 'PDF';
+        if (/\.(zip|rar|7z|tar|gz)$/.test(n)) return 'Archive';
+        return 'File';
+    }
+    function humanStatus(d) {
+        // Map internal drive.status to a user-visible label matching
+        // the Figma badges (Sharing, Active, Completed, etc.).
+        const s = (d.status || '').toLowerCase();
+        if (s === 'sharing' || s === 'seeding') return 'Sharing';
+        if (s === 'downloading') return 'Downloading';
+        if (s === 'complete' || s === 'completed' || s === 'downloaded') return 'Completed';
+        if (s === 'paused') return 'Paused';
+        if (s === 'error' || s === 'failed') return 'Failed';
+        if (s === 'inactive') return 'Inactive';
+        return 'Active';
+    }
+    function renderSendRecentShares() {
+        const section = document.getElementById('sendRecentSection');
+        const grid = document.getElementById('sendRecentGrid');
+        if (!section || !grid) return;
+        const all = (typeof drives !== 'undefined' && Array.isArray(drives)) ? drives : [];
+        // Cap at 4 — matches the Figma (2×2 grid, up to 4 most-recent).
+        const shares = all.filter(d => d.type === 'share').slice(0, 4);
+        section.classList.add('active');
+        if (shares.length === 0) {
+            section.classList.add('is-empty');
+            grid.innerHTML = '';
+            return;
+        }
+        section.classList.remove('is-empty');
+        grid.innerHTML = shares.map(d => {
+            const isFolder = (d.fileCount || 0) > 1 || d.type === 'folder';
+            const category = isFolder ? 'Folder' : categoryFromName(d.title);
+            const status = humanStatus(d);
+            const fallbackIcon = isFolder ? '📁' : iconForType({ name: d.title });
+            return `
+                <div class="send-recent-item" data-drive-id="${escapeHtml(d.id)}">
+                    <div class="send-recent-item-thumb" data-drive-id="${escapeHtml(d.id)}" aria-hidden="true">${fallbackIcon}</div>
+                    <div class="send-recent-item-info">
+                        <div class="send-recent-item-name">${escapeHtml(d.title)}</div>
+                        <div class="send-recent-item-subtitle">${escapeHtml(category)} · <span class="send-recent-item-subtitle-status">${escapeHtml(status)}</span></div>
+                    </div>
+                    <button type="button" class="send-recent-item-link" data-drive-id="${escapeHtml(d.id)}" data-share-link="${escapeHtml(d.shareLink || '')}">Link</button>
+                </div>
+            `;
+        }).join('');
+        // Load real thumbnails asynchronously — the emoji fallback shows
+        // instantly, then swaps in when the IPC returns. Same infra used
+        // by the drive-item list for consistency.
+        shares.forEach((d) => {
+            const path = d.files?.[0]?.path;
+            if (!path || !window.electronAPI?.getFileThumbnail) return;
+            window.electronAPI.getFileThumbnail(path).then((res) => {
+                if (!res || !res.src || res.kind === 'none') return;
+                const thumbEl = grid.querySelector(`.send-recent-item-thumb[data-drive-id="${d.id}"]`);
+                if (thumbEl) thumbEl.innerHTML = `<img src="${res.src}" alt="">`;
+            }).catch(() => {});
+        });
+    }
+
+    // Delegated click handler for Recent Shares "Link" buttons — copies
+    // the drive's peardrop:// link to the clipboard.
+    const sendRecentGrid = document.getElementById('sendRecentGrid');
+    if (sendRecentGrid) {
+        sendRecentGrid.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.send-recent-item-link');
+            if (!btn) return;
+            const link = btn.dataset.shareLink;
+            if (!link) return;
+            try {
+                await navigator.clipboard.writeText(link);
+                if (typeof showToast === 'function') showToast('Link copied', 'success');
+            } catch {
+                if (typeof showToast === 'function') showToast('Copy failed', 'error');
+            }
+        });
+    }
+
+    function openSendModal() {
+        if (!sendModalOverlay) return;
+        renderSendFileReview();     // refresh state B based on activeFiles
+        renderSendRecentShares();   // refresh recent-shares grid from drives
+        sendModalOverlay.classList.add('active');
+    }
+    function closeSendModal() {
+        if (!sendModalOverlay) return;
+        sendModalOverlay.classList.remove('active');
+    }
+
+    if (sendBtn) sendBtn.addEventListener('click', openSendModal);
+    if (sendModalClose) sendModalClose.addEventListener('click', closeSendModal);
+    if (sendModalOverlay) {
+        sendModalOverlay.addEventListener('click', (e) => {
+            if (e.target === sendModalOverlay) closeSendModal();
+        });
+    }
+
+    // Add Files card — open native picker without closing the modal.
+    // After the picker returns and handleFiles finishes populating
+    // activeFiles, we re-render the modal into State B.
+    if (sendAddFilesCard) {
+        sendAddFilesCard.addEventListener('click', () => {
+            if (typeof selectFiles === 'function') {
+                selectFiles();
+                // Poll briefly for activeFiles to fill in (handleFiles is
+                // async — fetches stats via IPC — so we can't just call
+                // renderSendFileReview() synchronously here). MutationObserver
+                // on filePreview.active would be cleaner but this is simpler.
+                let attempts = 0;
+                const tick = setInterval(() => {
+                    attempts++;
+                    if (typeof activeFiles !== 'undefined' && activeFiles.length > 0) {
+                        clearInterval(tick);
+                        renderSendFileReview();
+                    } else if (attempts > 40) {  // ~4 seconds worst case
+                        clearInterval(tick);
+                    }
+                }, 100);
+            }
+        });
+    }
+
+    // "Change files" — clear the current selection and go back to State A.
+    if (sendFileReviewClearBtn) {
+        sendFileReviewClearBtn.addEventListener('click', () => {
+            if (typeof clearFiles === 'function') clearFiles();
+            renderSendFileReview();
+        });
+    }
+
+    // Share button — fires the existing startShare(). It handles the
+    // whole share flow and pops the existing shareModal with QR + link.
+    // We close the Send modal as we hand off.
+    if (sendShareBtn) {
+        sendShareBtn.addEventListener('click', () => {
+            closeSendModal();
+            if (typeof startShare === 'function') startShare();
+        });
+    }
+
+    // Receive modal wiring — top-right "↓ Receive" button opens the
+    // modal. Paste button reads the input and pipes into the existing
+    // startDownload flow via linkInput. QR area launches the existing
+    // openQrScanner. Import QR image triggers the existing #qrFileInput.
+    const receiveBtn = document.getElementById('topReceiveBtn');
+    const receiveModalOverlay = document.getElementById('receiveModalOverlay');
+    const receiveModalClose = document.getElementById('receiveModalCloseBtn');
+    const receivePasteInput = document.getElementById('receivePasteInput');
+    const receivePasteBtn = document.getElementById('receivePasteBtn');
+    const receiveQrArea = document.getElementById('receiveQrArea');
+    const receiveImportQrBtn = document.getElementById('receiveImportQrBtn');
+
+    function openReceiveModal() {
+        if (!receiveModalOverlay) return;
+        receiveModalOverlay.classList.add('active');
+        if (receivePasteInput) receivePasteInput.focus();
+    }
+    function closeReceiveModal() {
+        if (!receiveModalOverlay) return;
+        receiveModalOverlay.classList.remove('active');
+        if (receivePasteInput) receivePasteInput.value = '';
+    }
+
+    if (receiveBtn) receiveBtn.addEventListener('click', openReceiveModal);
+    if (receiveModalClose) receiveModalClose.addEventListener('click', closeReceiveModal);
+    if (receiveModalOverlay) {
+        receiveModalOverlay.addEventListener('click', (e) => {
+            if (e.target === receiveModalOverlay) closeReceiveModal();
+        });
+    }
+
+    // Paste-and-download: pipe into the existing startDownload which
+    // reads linkInput.value + runs the full duplicate-check → open →
+    // download flow. Keeps all validation/error-handling in one place.
+    function submitReceiveLink() {
+        if (!receivePasteInput) return;
+        const link = receivePasteInput.value.trim();
+        if (!link) {
+            receivePasteInput.focus();
+            return;
+        }
+        // Existing startDownload reads from #linkInput — set it, then fire.
+        if (linkInput) linkInput.value = link;
+        closeReceiveModal();
+        if (typeof startDownload === 'function') startDownload();
+    }
+    if (receivePasteBtn) receivePasteBtn.addEventListener('click', submitReceiveLink);
+    if (receivePasteInput) {
+        receivePasteInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') submitReceiveLink();
+        });
+    }
+
+    // QR area → open existing QR scanner (camera + file picker in one modal).
+    if (receiveQrArea) {
+        receiveQrArea.addEventListener('click', () => {
+            closeReceiveModal();
+            if (typeof window.openQrScanner === 'function') {
+                window.openQrScanner({
+                    onResult: (text) => {
+                        if (linkInput) linkInput.value = text;
+                        if (typeof startDownload === 'function') startDownload();
+                    }
+                });
+            }
+        });
+    }
+
+    // "Import QRcode Image" → triggers the existing hidden qrFileInput
+    // which the qr-scanner module already listens to for image decoding.
+    if (receiveImportQrBtn) {
+        receiveImportQrBtn.addEventListener('click', () => {
+            const qrFileInput = document.getElementById('qrFileInput');
+            if (qrFileInput) qrFileInput.click();
+        });
+    }
+
+    // Settings page wiring — gear button opens the full-page overlay,
+    // back arrow closes it. Version number is pulled from the same
+    // IPC handler the reset-notice uses (get-app-version).
+    const settingsBtn = document.getElementById('topSettingsBtn');
+    const settingsPage = document.getElementById('settingsPage');
+    const settingsBackBtn = document.getElementById('settingsBackBtn');
+    const settingsAboutVersion = document.getElementById('settingsAboutVersion');
+
+    function openSettingsPage() {
+        if (!settingsPage) return;
+        settingsPage.classList.add('active');
+    }
+    function closeSettingsPage() {
+        if (!settingsPage) return;
+        settingsPage.classList.remove('active');
+    }
+
+    if (settingsBtn) settingsBtn.addEventListener('click', openSettingsPage);
+    if (settingsBackBtn) settingsBackBtn.addEventListener('click', closeSettingsPage);
+
+    // Populate the About row's version from the live app version.
+    if (settingsAboutVersion && window.electronAPI?.getAppVersion) {
+        window.electronAPI.getAppVersion().then((v) => {
+            if (typeof v === 'string') settingsAboutVersion.textContent = 'v' + v;
+        }).catch(() => { /* leave placeholder */ });
+    }
+
+    // Report a bug page — reached from Settings → Report a bug row.
+    // Back arrow returns to Settings. Send Report currently just shows
+    // a confirmation toast (no backend endpoint wired yet).
+    const reportBugPage = document.getElementById('reportBugPage');
+    const reportBugBackBtn = document.getElementById('reportBugBackBtn');
+    const settingsReportBugBtn = document.getElementById('settingsReportBugBtn');
+    const bugDescription = document.getElementById('bugDescription');
+    const bugCharCount = document.getElementById('bugCharCount');
+    const bugTagVersion = document.getElementById('bugTagVersion');
+    const bugTagOS = document.getElementById('bugTagOS');
+    const bugSendReportBtn = document.getElementById('bugSendReportBtn');
+
+    function openReportBugPage() {
+        if (!reportBugPage) return;
+        // Close Settings first so back-arrow returns cleanly to app.
+        closeSettingsPage();
+        reportBugPage.classList.add('active');
+    }
+    function closeReportBugPage() {
+        if (!reportBugPage) return;
+        reportBugPage.classList.remove('active');
+    }
+
+    if (settingsReportBugBtn) settingsReportBugBtn.addEventListener('click', openReportBugPage);
+    if (reportBugBackBtn) reportBugBackBtn.addEventListener('click', closeReportBugPage);
+
+    // Live character counter — matches the /500 shown at bottom-right of
+    // the textarea. maxlength attribute already prevents exceeding 500.
+    if (bugDescription && bugCharCount) {
+        bugDescription.addEventListener('input', () => {
+            bugCharCount.textContent = String(bugDescription.value.length);
+        });
+    }
+
+    // Populate version + OS tags shown next to "Attach device info".
+    if (bugTagVersion && window.electronAPI?.getAppVersion) {
+        window.electronAPI.getAppVersion().then((v) => {
+            if (typeof v === 'string') bugTagVersion.textContent = 'v' + v;
+        }).catch(() => {});
+    }
+    if (bugTagOS) {
+        // navigator.userAgentData is Chromium-only; falls back to the
+        // classic userAgent string if not available.
+        const ua = navigator.userAgentData?.platform || navigator.platform || '';
+        let os = 'Unknown';
+        if (/win/i.test(ua)) os = 'Windows';
+        else if (/mac/i.test(ua)) os = 'macOS';
+        else if (/linux/i.test(ua)) os = 'Linux';
+        bugTagOS.textContent = os;
+    }
+
+    // Send Report — MVP just closes the page + shows a confirmation
+    // toast. Real submission endpoint TBD (see mockup screen 10 for
+    // the follow-up "Report sent" confirmation state).
+    if (bugSendReportBtn) {
+        bugSendReportBtn.addEventListener('click', () => {
+            closeReportBugPage();
+            if (bugDescription) bugDescription.value = '';
+            if (bugCharCount) bugCharCount.textContent = '0';
+            const locInput = document.getElementById('bugLocation');
+            if (locInput) locInput.value = '';
+            if (typeof showToast === 'function') {
+                showToast('Report sent — thanks for the feedback', 'success');
+            }
+        });
+    }
+
+    // Download-complete toast — bottom-right notification when a download
+    // finishes. Distinct from the general center-bottom showToast(). The
+    // Detail button (for now) just calls openDownloads to reveal the file
+    // in the OS file browser — later we can route it to the specific
+    // drive-item's info panel.
+    const dlToast = document.getElementById('downloadCompleteToast');
+    const dlToastFilename = document.getElementById('downloadCompleteFilename');
+    const dlToastDetail = document.getElementById('downloadCompleteDetail');
+    let dlToastHideTimer = null;
+    let dlToastLastPath = null;
+
+    function showDownloadCompleteToast(filename, filePath) {
+        if (!dlToast || !dlToastFilename) return;
+        dlToastFilename.textContent = (filename || 'file') + ' saved';
+        dlToastLastPath = filePath || null;
+        dlToast.classList.add('active');
+        if (dlToastHideTimer) clearTimeout(dlToastHideTimer);
+        dlToastHideTimer = setTimeout(() => {
+            dlToast.classList.remove('active');
+        }, 5000);
+    }
+
+    if (dlToastDetail) {
+        dlToastDetail.addEventListener('click', () => {
+            // Reveal the downloaded file in Finder/Explorer if we have a
+            // path; otherwise open the downloads folder.
+            if (dlToastLastPath && window.electronAPI?.showFileInFolder) {
+                window.electronAPI.showFileInFolder(dlToastLastPath);
+            } else if (window.electronAPI?.openDownloads) {
+                window.electronAPI.openDownloads();
+            }
+            if (dlToast) dlToast.classList.remove('active');
+        });
+    }
+
+    // Hook the existing onFilesDownloaded IPC event. Payload shape from
+    // main.js: { driveId, files: [{ path, name, ... }] }.
+    if (window.electronAPI?.onFilesDownloaded) {
+        window.electronAPI.onFilesDownloaded((event, data) => {
+            const first = data?.files?.[0];
+            const filename = first?.name || 'File';
+            const filePath = first?.path || null;
+            showDownloadCompleteToast(filename, filePath);
+        });
+    }
+})();
+
+// ============================================================================
 // DEBUG UTILITIES
 // ============================================================================
 
