@@ -514,15 +514,14 @@
                 justify-content: stretch;
                 padding: 0 14px;
                 gap: 0;
-                /* Keep the outer glass panel — small frame around the pill. */
+                /* Outer glass panel around the pill — app-wide iOS-frosted-
+                   glass recipe (same as .modal / .glass / dropdowns). */
                 border-radius: 16px;
-                background: rgba(40, 40, 40, 0.32);
-                backdrop-filter: blur(28px) saturate(140%);
-                -webkit-backdrop-filter: blur(28px) saturate(140%);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                box-shadow:
-                    0 8px 32px rgba(0, 0, 0, 0.4),
-                    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+                background: rgba(180, 184, 195, 0.22);
+                backdrop-filter: blur(6px) saturate(150%);
+                -webkit-backdrop-filter: blur(6px) saturate(150%);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
                 overflow: hidden;
             }
 
@@ -737,10 +736,16 @@
                 align-items: center;
                 justify-content: space-between;
                 gap: 16px;
-                padding: 12px 4px 0; /* zero bottom — tabs sit flush against the panel below */
+                padding: 12px 0 0;
                 flex-shrink: 0;
-                order: -10; /* first thing in the .app flex column */
-                margin-bottom: -12px; /* eat the .app column gap below */
+                order: -10;
+                margin-bottom: -12px;
+            }
+            /* Tabs ONLY get bottom alignment — so their bottom edge sits
+               flush against the container top for the seamless flow.
+               Send/Receive/gear (on .top-actions) stay center-aligned. */
+            .top-tabs {
+                align-self: flex-end;
             }
 
             /* ============================================================
@@ -763,38 +768,100 @@
             }
             #listContainer .scroll-list {
                 display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 10px;
+                /* minmax(0, 1fr) — CRITICAL for the vertical separator
+                   to stay centered. Plain `1fr` uses `auto` as its
+                   implicit min, which means "at least the min-content
+                   width of the widest child". A drive-item with a long
+                   filename can force its column wider than its share,
+                   which shifts the actual column midpoint away from
+                   50% and makes the ::before separator drift into the
+                   narrower (left) column. `minmax(0, 1fr)` overrides
+                   the auto-min and forces both columns to be exactly
+                   equal, letting the drive-item's own title ellipsis
+                   handle overflow. */
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                gap: 24px 32px;                  /* room for separators between rows AND columns */
                 align-content: start;
                 background: transparent;
+                padding: 12px 28px;              /* breathe from the container's left/right edges */
+                /* Anchor for the ::before vertical separator below. */
+                position: relative;
+            }
+            /* Narrow-desktop tightening — under ~1000px there isn't
+               enough width for the intended 28px side padding + 32px
+               column gap AND readable cards. Trim both so the 2-column
+               grid stays comfortable instead of crushing content.
+               Grid remains 2 columns; separator stays centered. */
+            @media (min-width: 600px) and (max-width: 999px) {
+                #listContainer .scroll-list {
+                    gap: 20px 20px;
+                    padding: 10px 14px;
+                }
+                /* Card max-width down + row-side padding trimmed so
+                   the thumb+title+button row still fits at ~380px per
+                   column without the button wrapping. */
+                body #listContainer .drive-item {
+                    padding: 14px 10px;
+                }
+            }
+            /* Vertical column separator — thin line down the middle of
+               the two-column drives grid.
+               NOT `left: 50%` — the ScrollList lib sets
+               `scrollbar-gutter: stable` on .scroll-list which reserves
+               ~8px on the right side. That shifts the two grid columns
+               leftward relative to the padding box, so `50%` lands to
+               the RIGHT of the true column midpoint. We compute the
+               midpoint from the actual grid geometry:
+                 columns span from padding-left (28px) to
+                 (100% − padding-right − scrollbar-gutter) = (100% − 28px − 8px)
+                 midpoint = (28px + (100% − 36px)) / 2 = 50% − 4px
+               `translateX(-50%)` then centers the 1px line ON that
+               midpoint so it's not a hair off due to sub-pixel
+               left-edge positioning. */
+            #listContainer .scroll-list::before {
+                content: '';
+                position: absolute;
+                top: 16px;
+                bottom: 16px;
+                left: calc(50% - 4px);
+                transform: translateX(-50%);
+                width: 1px;
+                background: rgba(255, 255, 255, 0.05);
+                pointer-events: none;
             }
 
             /* ============================================================
-               Top tabs — SEGMENTED CONTROL (Amir's design).
-               Both tabs sit inside a single rounded container. Container
-               fill = inactive-tab color. Active tab has a filled pill of
-               content-panel color that visually blends with .app below.
-               Inactive tab is transparent → invisible-blend into container.
+               Top tabs — FOLDER-TAB pattern (Amir's target design).
+               Each tab is its own rounded-top-only rectangle. NO
+               wrapping segmented container.
+                 - Active tab: fill = content-panel color (#1a1a20). Its
+                   BOTTOM EDGE sits flush against the container top —
+                   because both are the same color and there's zero gap
+                   between the top-bar and the container, the tab looks
+                   like it "flows into" the container below.
+                 - Inactive tab: distinct darker card. Rounded top,
+                   floating separately.
                N-tab friendly: any number of .top-tab elements slot in.
-               (Bottom seam between active tab and content panel to be
-               visually smoothed later — for now they share the same fill.)
                ============================================================ */
             .top-tabs {
-                --tab-active-bg: #1a1a20;       /* matches .app content panel */
-                --tab-inactive-bg: #2e2e34;     /* segmented container fill */
+                --tab-active-bg: #1a1a20;       /* matches container top */
+                --tab-inactive-bg: #2e2e34;     /* inactive card fill */
 
                 display: inline-flex;
-                gap: 4px;
-                padding: 4px;
-                align-items: stretch;
-                background: var(--tab-inactive-bg);
-                border-radius: 14px;
+                gap: 0;
+                padding: 0;
+                background: #2e2e34;
+                border-radius: 14px 14px 0 0;   /* both top corners curved at all times */
+                align-items: flex-end;
+                overflow: visible;              /* allow the active-tab flare pseudos to extend outside */
+                position: relative;
             }
             .top-tab {
-                padding: 10px 26px;
+                position: relative;             /* anchor for the always-rendered flare pseudos */
+                padding: 14px 32px 16px;
                 background: transparent;
                 border: none;
-                border-radius: 10px;
+                border-radius: 14px 14px 0 0;   /* rounded top only */
                 color: rgba(255, 255, 255, 0.65);
                 font-family: inherit;
                 font-size: 22px;
@@ -804,12 +871,54 @@
                 transition: background 0.18s ease, color 0.18s ease;
                 outline: none;
             }
+            .top-tab:not(.is-active) {
+                background: transparent;   /* container's grey shows through */
+            }
             .top-tab:hover:not(.is-active) {
-                color: rgba(255, 255, 255, 0.9);
+                color: rgba(255, 255, 255, 0.95);
             }
             .top-tab.is-active {
+                z-index: 2;                     /* keep flare pseudos above the inactive neighbour */
                 background: var(--tab-active-bg);
                 color: #ffffff;
+            }
+            /* Chrome-tab flare pseudos live on the tabs UNCONDITIONALLY so
+               there's nothing to spawn / tear down on a tab switch. Only
+               their background-color changes with .is-active, transitioned
+               alongside the tab's own fill → no shape blink.
+
+                 Shares (first-child)  → ::after      (right flare only)
+                 Favorites (last-child) → ::before + ::after (both flares)
+
+               Concave mask arcs AWAY from the tab so the tab's outer edge
+               reads as flaring OUT-and-DOWN into the container below. */
+            .top-tab:first-child::after,
+            .top-tab:last-child::before,
+            .top-tab:last-child::after {
+                content: '';
+                position: absolute;
+                bottom: 0;
+                width: 14px;                    /* match the tab's own top-corner radius (14px) */
+                height: 14px;
+                background: transparent;
+                pointer-events: none;
+                transition: background-color 120ms ease;
+            }
+            .top-tab.is-active:first-child::after,
+            .top-tab.is-active:last-child::before,
+            .top-tab.is-active:last-child::after {
+                background: var(--tab-active-bg);
+            }
+            .top-tab:first-child::after,
+            .top-tab:last-child::after {
+                right: -14px;
+                mask-image: radial-gradient(circle at top right, transparent 14px, black 14px);
+                -webkit-mask-image: radial-gradient(circle at top right, transparent 14px, black 14px);
+            }
+            .top-tab:last-child::before {
+                left: -14px;
+                mask-image: radial-gradient(circle at top left, transparent 14px, black 14px);
+                -webkit-mask-image: radial-gradient(circle at top left, transparent 14px, black 14px);
             }
             /* Keyboard focus indicator (Tab-nav only, not mouse clicks). */
             .top-tab:focus-visible {
@@ -835,36 +944,36 @@
             .modal-overlay .modal {
                 max-width: 760px;
                 min-height: 520px;
-                /* iOS-style frosted glass — LIGHT translucent tint on
-                   top of a MODERATE blur so app content behind actually
-                   shows through with recognizable shapes/colors instead
-                   of being erased into a flat surface.
-                   Key tuning:
-                     - Lighter fill (mid-grey with alpha 0.28) so glass
-                       "brightens" the panel visibly against dark bg
-                     - Blur radius reduced (was 40px, now 24px) so shapes
-                       behind stay recognizable — the essence of glass
-                     - Higher saturation preserves color from behind */
-                background: rgba(120, 122, 132, 0.28);
-                backdrop-filter: blur(10px) saturate(180%);
-                -webkit-backdrop-filter: blur(10px) saturate(180%);
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                /* App-wide iOS-frosted-glass recipe — Amir tuned this
+                   on the kebab menu ("the best glass by far") and asked
+                   for it applied everywhere. Denser tints / heavier
+                   blurs erase shapes behind into flat grey. */
+                background: rgba(180, 184, 195, 0.22);
+                backdrop-filter: blur(6px) saturate(150%);
+                -webkit-backdrop-filter: blur(6px) saturate(150%);
+                border: 1px solid rgba(255, 255, 255, 0.10);
                 border-radius: 22px;
-                /* No outer drop shadow — kept only the subtle inset
-                   highlight that gives the glass its top edge. */
-                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             }
+            /* Exception to the canonical 760×520 modal size: the QR scanner
+               is a small utility viewer (square camera feed + one dropdown
+               + one button). At 760px wide it dominated the viewport and
+               left huge dead space around the video. Kept narrow +
+               auto-height so it hugs its content. */
             .modal-overlay .modal.qr-scanner-modal {
-                max-width: 760px;
-                min-height: 520px;
+                max-width: 440px;
+                min-height: 0;
+                padding: 22px 22px 20px;
             }
-            /* Overlay = BARELY-there dim so the app content shows
-               through the modal's glass as clearly as possible.
-               No backdrop-filter here — the modal itself provides the
+            /* Modal overlay scrim — 50% dim on the page behind every
+               modal so the modal's iOS-frosted-glass reads against a
+               calmer background. Applied globally after Amir validated
+               the strength on the Send modal.
+               NO backdrop-filter here — the modal itself provides the
                blur. Nested backdrop-filter cancels out (blurring
-               already-blurred content), so this rule stays minimal. */
+               already-blurred content). */
             .modal-overlay {
-                background: transparent;
+                background: rgba(0, 0, 0, 0.50);
             }
 
             .send-modal {
@@ -1733,6 +1842,206 @@
             }
 
             /* ============================================================
+               FILE INFO MODAL (Desktop v2, Figma screen #19)
+               Opened by the drive-card 3-dot menu → Properties. Shell
+               (width, glass, radius) comes from the canonical .modal rule;
+               only INTERNAL layout lives here.
+               ============================================================ */
+            .file-info-modal {
+                padding: 22px 28px 24px;
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+            }
+            .file-info-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .file-info-title {
+                margin: 0;
+                font-size: 22px;
+                font-weight: 700;
+                color: #ffffff;
+                letter-spacing: -0.2px;
+            }
+            /* Canonical app close button — same shape as .send-modal-close /
+               .qr-scanner-close (2px red outline square, red glyph). */
+            .file-info-close {
+                width: 32px;
+                height: 32px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                background: transparent;
+                border: 2px solid rgba(255, 100, 100, 0.75);
+                border-radius: 8px;
+                color: rgba(255, 100, 100, 0.95);
+                font-size: 20px;
+                font-weight: 600;
+                line-height: 1;
+                cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease;
+            }
+            .file-info-close:hover {
+                background: rgba(255, 100, 100, 0.12);
+                border-color: rgba(255, 100, 100, 0.9);
+            }
+            /* Hero row: big thumbnail + filename + one-line sub */
+            .file-info-hero {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+            .file-info-thumb {
+                flex: 0 0 auto;
+                width: 72px;
+                height: 72px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.08);
+                border: 2px solid rgba(255, 255, 255, 0.12);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: rgba(255, 255, 255, 0.85);
+                overflow: hidden;
+            }
+            .file-info-thumb svg {
+                width: 34px;
+                height: 34px;
+            }
+            .file-info-thumb img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+            .file-info-hero-text {
+                flex: 1 1 auto;
+                min-width: 0;      /* let long names truncate */
+            }
+            .file-info-name {
+                font-size: 18px;
+                font-weight: 700;
+                color: #ffffff;
+                letter-spacing: -0.2px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .file-info-sub {
+                margin-top: 4px;
+                font-size: 13px;
+                color: rgba(255, 255, 255, 0.55);
+                font-weight: 500;
+            }
+            /* Property grid: 2 columns of label / value rows */
+            .file-info-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px 24px;
+                padding: 4px 0;
+            }
+            .file-info-grid-row {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                padding: 8px 0;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            .file-info-grid-label {
+                font-size: 12px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                color: rgba(255, 255, 255, 0.45);
+            }
+            .file-info-grid-value {
+                font-size: 15px;
+                font-weight: 600;
+                color: #ffffff;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            /* Share-link box (mirrors the share-link-modal treatment) */
+            .file-info-linkbox {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .file-info-linkbox-label {
+                font-size: 12px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                color: rgba(255, 255, 255, 0.45);
+            }
+            .file-info-linkbox-row {
+                display: flex;
+                gap: 10px;
+                align-items: stretch;
+            }
+            .file-info-linkbox-value {
+                flex: 1 1 auto;
+                min-width: 0;
+                padding: 12px 16px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 2px solid rgba(168, 206, 56, 0.55);
+                border-radius: 12px;
+                color: rgba(168, 206, 56, 1);
+                font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+                font-size: 12px;
+                overflow-wrap: anywhere;
+                max-height: 72px;
+                overflow-y: auto;
+            }
+            .file-info-linkbox-copy {
+                flex: 0 0 auto;
+                padding: 0 20px;
+                border: 2px solid rgba(168, 206, 56, 0.6);
+                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.04);
+                color: rgba(168, 206, 56, 1);
+                font-family: inherit;
+                font-size: 14px;
+                font-weight: 700;
+                letter-spacing: -0.1px;
+                cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease;
+            }
+            .file-info-linkbox-copy:hover {
+                background: rgba(168, 206, 56, 0.10);
+                border-color: rgba(168, 206, 56, 0.75);
+            }
+            /* Grey out link box when there is no shareLink (download-only). */
+            .file-info-modal.no-link .file-info-linkbox {
+                display: none;
+            }
+            .file-info-actions {
+                display: flex;
+                justify-content: flex-end;
+                margin-top: 4px;
+            }
+            .file-info-done {
+                min-width: 140px;
+                height: 52px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 2px solid rgba(168, 206, 56, 0.6);
+                color: rgba(168, 206, 56, 1);
+                font-family: inherit;
+                font-size: 15px;
+                font-weight: 700;
+                letter-spacing: -0.1px;
+                cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease;
+            }
+            .file-info-done:hover {
+                background: rgba(168, 206, 56, 0.10);
+                border-color: rgba(168, 206, 56, 0.75);
+            }
+
+            /* ============================================================
                DOWNLOAD-COMPLETE TOAST (Desktop v2)
                Fixed bottom-right, slides in when a download finishes.
                Distinct visual from the general center-bottom .toast so
@@ -2039,29 +2348,360 @@
             fill: rgba(255, 255, 255, 0.8);
         }
 
-        /* Glassy style — softened so the aurora background reads through */
+        /* Glassy utility class — app-wide iOS-frosted-glass recipe
+           (see the same values on .modal-overlay .modal). */
         .glass {
-            background: rgba(40, 40, 40, 0.32);
-            backdrop-filter: blur(28px) saturate(140%);
-            -webkit-backdrop-filter: blur(28px) saturate(140%);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow:
-                0 8px 32px rgba(0, 0, 0, 0.4),
-                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
         }
 
-        /* Drive items inside the share history — frosted-cell look against
-           the aurora-tinted glass behind them. Targets the container only,
-           not text/icons inside (those inherit untouched). */
-        #listContainer .drive-item {
+        /* Desktop v2 (Figma): iOS-inset-list style. Subtle rounded card
+           per row (very faint fill so the container gradient still
+           reads through), bumpy corners, centered in each grid column
+           with a max width. Row separators are drawn as a ::before
+           pseudo floating in the space ABOVE the card, so the line has
+           gap on both sides (card ↔ line ↔ card). */
+        body #listContainer .drive-item {
+            position: relative;               /* anchor for the separator pseudo */
+            background: transparent;          /* no card fill — the rounded shape only reveals on hover */
+            border: none;
+            border-radius: 20px;              /* bumpier iOS corners */
+            padding: 16px 16px;
+            box-shadow: none;
+            max-width: 440px;
+            margin: 0 auto;
+            gap: 14px;                        /* between thumb and content */
+        }
+        /* Bigger, chunkier iOS-style thumbnails on desktop rows. */
+        body #listContainer .drive-item .drive-item-thumb {
+            width: 56px;
+            height: 56px;
+            min-width: 56px;
+            border-radius: 12px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.06);
+        }
+        body #listContainer .drive-item .drive-item-thumb.is-folder,
+        body #listContainer .drive-item .drive-item-thumb.is-fileicon {
+            background: transparent;         /* let the SVG carry the color */
+        }
+        body #listContainer .drive-item .drive-item-thumb-folder {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            color: #6ee0d3;                  /* teal folder — matches Figma */
+        }
+        body #listContainer .drive-item .drive-item-thumb-folder svg {
+            width: 88%;
+            height: 88%;
+        }
+        /* Category-tinted file-type SVG icons (photo/video/audio/doc/
+           archive/code/…). Same box as the folder icon so all thumbs
+           read at a consistent 56px size. Color is inlined via the
+           `style="color:…"` on the span; the SVG uses currentColor. */
+        body #listContainer .drive-item .drive-item-thumb-fileicon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+        }
+        body #listContainer .drive-item .drive-item-thumb-fileicon svg {
+            width: 78%;
+            height: 78%;
+        }
+        /* Bump the filename to feel bigger + bolder alongside the larger
+           thumb (iOS list-cell scale). */
+        body #listContainer .drive-item .drive-item-title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.1px;
+        }
+        /* Horizontal row-separator floating above each card in rows 2+.
+           Positioned in the middle of the grid's row-gap (24px), so it
+           has ~12px of clear space to the card above and ~12px to the
+           card below — no line touching the rounded card edges. */
+        body #listContainer .scroll-list-slot:nth-child(n+3) .drive-item::before {
+            content: '';
+            position: absolute;
+            top: -13px;                        /* halfway into the 24px row-gap */
+            left: 12%;
+            right: 12%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.05);
+            pointer-events: none;
+        }
+        body #listContainer .drive-item:hover {
             background: rgba(255, 255, 255, 0.04);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border-color: rgba(255, 255, 255, 0.08);
+        }
+        /* The old size/fileCount meta line and right-side status pill
+           are replaced by the new inline .drive-item-status-line under
+           the title (rendered by the library, revealed below). */
+        body #listContainer .drive-item .drive-item-meta {
+            display: none;
+        }
+        body #listContainer .drive-item .drive-item-status {
+            display: none;
+        }
+        /* Status line — reveal, layout, and color by [data-status]. */
+        body #listContainer .drive-item .drive-item-status-line {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        body .drive-item-status-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: rgba(255, 255, 255, 0.55);
+            font-weight: 500;
+        }
+        body .drive-item-status-count-icon {
+            display: inline-flex;
+            width: 18px;
+            height: 18px;
+            color: rgba(255, 255, 255, 0.55);
+        }
+        body .drive-item-status-count-icon svg {
+            width: 100%;
+            height: 100%;
+        }
+        /* File-type prefix ("Picture", "Music", …) — same muted weight
+           as the count text, sits before the • separator. */
+        body .drive-item-status-type {
+            color: #ffffff;
+            font-weight: 600;
+        }
+        body .drive-item-status-dot {
+            color: rgba(255, 255, 255, 0.45);
+            font-weight: 700;
+            margin: 0 2px;
+        }
+        body .drive-item-status-label {
+            color: rgba(255, 255, 255, 0.55);
+        }
+        /* ─── Favorite star next to filename ────────────────────────
+           In the DOM on every row so the CSS-only toggle is instant;
+           only visible when data-fav="true". Gold fill via currentColor. */
+        body #listContainer .drive-item .drive-item-fav-star {
+            display: none;
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+            color: #f5c93a;                    /* gold */
+        }
+        body #listContainer .drive-item .drive-item-fav-star[data-fav="true"] {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        body #listContainer .drive-item .drive-item-fav-star svg {
+            width: 100%;
+            height: 100%;
+        }
+        /* Color mapping per [data-status]. Green = healthy/done,
+           red = broken/off, amber = in-progress, grey = paused. */
+        body .drive-item-status-line[data-status="sharing"] .drive-item-status-label,
+        body .drive-item-status-line[data-status="complete"] .drive-item-status-label {
+            color: #6ac168;                 /* pear-green */
+        }
+        body .drive-item-status-line[data-status="inactive"] .drive-item-status-label,
+        body .drive-item-status-line[data-status="error"] .drive-item-status-label,
+        body .drive-item-status-line[data-status="missing"] .drive-item-status-label {
+            color: #ff6b6b;                 /* red */
+        }
+        body .drive-item-status-line[data-status="downloading"] .drive-item-status-label,
+        body .drive-item-status-line[data-status="connecting"] .drive-item-status-label,
+        body .drive-item-status-line[data-status="sharing-progress"] .drive-item-status-label {
+            color: #f0b840;                 /* amber — mid-transfer */
+        }
+        body .drive-item-status-line[data-status="paused"] .drive-item-status-label {
+            color: rgba(255, 255, 255, 0.5);
         }
 
-        #listContainer .drive-item:hover {
-            background: rgba(255, 255, 255, 0.08);
+        /* ─── Desktop v2 row action buttons (Figma) ────────────────
+           Right-side per-row action, sitting between the row content
+           and the kebab. Three variants:
+             .open   — green pill,  status=complete
+             .retry  — red pill,    status=error/missing
+             .cancel — red circle,  in-progress transfers
+           Anchored via body-prefix to beat the library's runtime rules. */
+        body #listContainer .drive-item .drive-item-row-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin: 0 6px 0 8px;
+            font-family: inherit;
+            font-weight: 700;
+            letter-spacing: -0.1px;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease, filter 0.15s ease, transform 0.1s ease;
+        }
+        body #listContainer .drive-item .drive-item-row-action:active {
+            transform: scale(0.96);
+        }
+
+        /* OPEN — green pill (secondary style: dark fill + green outline
+           + green text, matches iOS-style outlined action). */
+        body #listContainer .drive-item .drive-item-row-action-open {
+            min-width: 82px;
+            height: 36px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: rgba(50, 70, 30, 0.35);
+            border: 2px solid rgba(168, 206, 56, 0.65);
+            color: #a8ce38;
+            font-size: 14px;
+        }
+        body #listContainer .drive-item .drive-item-row-action-open:hover {
+            background: rgba(168, 206, 56, 0.15);
+            border-color: rgba(168, 206, 56, 0.85);
+        }
+
+        /* RETRY — red filled pill (destructive-solid: red bg + white text).
+           Draws the eye harder than Open because a failed transfer is a
+           call-to-action, not a completed one. */
+        body #listContainer .drive-item .drive-item-row-action-retry {
+            min-width: 82px;
+            height: 36px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: #ef4a5f;
+            border: 2px solid #ef4a5f;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        body #listContainer .drive-item .drive-item-row-action-retry:hover {
+            filter: brightness(1.08);
+        }
+
+        /* CANCEL X — red outlined circle. Matches the canonical modal
+           close-button treatment (2px red border + red glyph) so "close /
+           cancel / dismiss" reads consistently across the app. */
+        body #listContainer .drive-item .drive-item-row-action-cancel {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: transparent;
+            border: 2px solid rgba(255, 100, 100, 0.75);
+            color: rgba(255, 100, 100, 0.95);
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1;
+        }
+        body #listContainer .drive-item .drive-item-row-action-cancel:hover {
+            background: rgba(255, 100, 100, 0.12);
+            border-color: rgba(255, 100, 100, 0.9);
+        }
+
+        /* ─── Desktop v2: 3-dot context menu (Figma screen #18) ──────────
+           The drive-item library injects its own menu styles at runtime,
+           AFTER this <style> block. Prefix with `body ` to lift specificity
+           above the library and win the cascade. Same trick the confirm-
+           dialog overrides below use. Mobile keeps the library defaults. */
+        @media (min-width: 600px) {
+            body .drive-item-menu {
+                min-width: 220px;
+                margin-top: 8px;
+                padding: 6px;
+                /* App-wide iOS-frosted-glass recipe (Amir's "best glass by
+                   far" — the reference implementation the rest of the app
+                   was aligned to). Denser tint or heavier blur erases
+                   shapes behind into flat grey; do not drift from these
+                   values. */
+                background: rgba(180, 184, 195, 0.22);
+                backdrop-filter: blur(6px) saturate(150%);
+                -webkit-backdrop-filter: blur(6px) saturate(150%);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 14px;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+                /* iOS-style open animation — anchor to top-right (the
+                   kebab button), settle with a subtle spring. Overrides
+                   the library's default 0.15s linear transitions. */
+                transform-origin: top right;
+                transform: translateY(-6px) scale(0.92);
+                opacity: 0;
+                transition:
+                    opacity 0.18s ease-out,
+                    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+                    visibility 0.22s;
+            }
+            body .drive-item-menu.open {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+            /* Menu items slide-in staggered with a soft fade — light
+               polish that hints at iOS. CSS-only (no JS): each item
+               plays the SAME animation, but with its own delay based
+               on structural position via :nth-child. Items always
+               animate on menu open because `.open` re-triggers the
+               animation-name assignment via specificity. */
+            @keyframes drive-item-menu-item-in {
+                from {
+                    opacity: 0;
+                    transform: translateY(-4px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            body .drive-item-menu.open .drive-item-menu-item,
+            body .drive-item-menu.open .drive-item-menu-divider {
+                animation: drive-item-menu-item-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+            }
+            body .drive-item-menu.open > :nth-child(1) { animation-delay: 0.02s; }
+            body .drive-item-menu.open > :nth-child(2) { animation-delay: 0.04s; }
+            body .drive-item-menu.open > :nth-child(3) { animation-delay: 0.06s; }
+            body .drive-item-menu.open > :nth-child(4) { animation-delay: 0.08s; }
+            body .drive-item-menu.open > :nth-child(5) { animation-delay: 0.10s; }
+            body .drive-item-menu.open > :nth-child(6) { animation-delay: 0.12s; }
+            body .drive-item-menu.open > :nth-child(7) { animation-delay: 0.14s; }
+            body .drive-item-menu.open > :nth-child(8) { animation-delay: 0.16s; }
+            body .drive-item-menu.open > :nth-child(9) { animation-delay: 0.18s; }
+            body .drive-item-menu.open > :nth-child(10) { animation-delay: 0.20s; }
+            body .drive-item-menu-item {
+                padding: 11px 14px;
+                border-radius: 9px;
+                color: #ffffff;
+                font-size: 15px;
+                font-weight: 600;
+                letter-spacing: -0.1px;
+            }
+            body .drive-item-menu-item:hover {
+                background: rgba(255, 255, 255, 0.13);
+            }
+            body .drive-item-menu-item.danger {
+                color: #ff6b6b;
+            }
+            body .drive-item-menu-item.danger:hover {
+                background: rgba(255, 107, 107, 0.16);
+                color: #ff8585;
+            }
+            body .drive-item-menu-divider {
+                height: 1px;
+                margin: 6px 8px;
+                background: rgba(255, 255, 255, 0.14);
+            }
+            /* Kebab button itself — bump contrast a touch so it reads on the
+               dark drive-card background without hover. */
+            body .drive-item-menu-btn {
+                opacity: 0.7;
+            }
+            body .drive-item-menu-btn:hover {
+                opacity: 1;
+                background: rgba(255, 255, 255, 0.12);
+            }
         }
 
         /* SHARE button rendered inside the drop-zone (desktop Share only).
@@ -2306,12 +2946,13 @@
             right: 0;
             margin-top: 4px;
             min-width: 180px;
-            background: rgba(15, 15, 15, 0.95);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            /* App-wide iOS-frosted-glass — same recipe as .modal / .glass. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             overflow: visible; /* Allow submenu to overflow */
             opacity: 0;
             visibility: hidden;
@@ -2383,12 +3024,13 @@
         .list-submenu {
             position: fixed; /* Fixed to escape any stacking context */
             min-width: 160px;
-            background: rgba(15, 15, 15, 0.95);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            /* App-wide iOS-frosted-glass — same recipe as .modal / .glass. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             overflow: hidden;
             opacity: 0;
             visibility: hidden;
@@ -2497,12 +3139,14 @@
         }
 
         .confirm-dialog {
-            background: rgba(15, 15, 15, 0.95);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            /* App-wide iOS-frosted-glass — same recipe as .modal / .glass. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 16px;
             padding: 20px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             max-width: 320px;
             width: 90%;
             min-width: 0; /* let max-width win over a long unbreakable filename */
@@ -2816,14 +3460,16 @@
             bottom: 100px;
             left: 50%;
             transform: translateX(-50%) translateY(100px);
-            background: rgba(40, 40, 45, 0.95);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            /* App-wide iOS-frosted-glass — same recipe as .modal / .glass. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 12px;
             padding: 10px 16px 10px 12px;
             font-size: 13px;
             color: #fff;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             opacity: 0;
             transition: all 0.3s ease;
             z-index: 1000;
@@ -2903,13 +3549,14 @@
             max-width: 320px;
             border-radius: 20px;
             padding: 20px;
-            background: rgba(40, 40, 45, 0.95);
-            backdrop-filter: blur(40px);
-            -webkit-backdrop-filter: blur(40px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            /* No outer drop shadow — per canonical rule (v2 desktop
-               takes over via .modal-overlay .modal; this is the mobile
-               base and we keep it flat here too for consistency). */
+            /* App-wide iOS-frosted-glass — same recipe as the desktop
+               .modal-overlay .modal / .glass / dropdowns. Mobile base
+               keeps identical treatment for consistency. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
         }
 
         .modal-title {
@@ -2999,28 +3646,33 @@
             position: relative;
         }
 
+        /* Canonical app close button — 2px red outline square with a red
+           glyph. Same shape as .send-modal-close so every modal in the app
+           gets the same visual affordance for "close". Positioned absolute
+           at the modal's top-right corner. */
         .qr-scanner-close {
             position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 28px;
-            height: 28px;
-            border: none;
-            background: rgba(55, 55, 55, 0.9);
-            border-radius: 50%;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 18px;
-            line-height: 1;
-            cursor: pointer;
-            display: flex;
+            top: 14px;
+            right: 14px;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.15s ease;
+            background: transparent;
+            border: 2px solid rgba(255, 100, 100, 0.75);
+            border-radius: 8px;
+            color: rgba(255, 100, 100, 0.95);
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease;
         }
 
         .qr-scanner-close:hover {
-            background: rgba(255, 255, 255, 0.16);
-            color: #fff;
+            background: rgba(255, 100, 100, 0.12);
+            border-color: rgba(255, 100, 100, 0.9);
         }
 
         .qr-scanner-stage {
@@ -3134,13 +3786,14 @@
             left: 0;
             right: 0;
             top: calc(100% + 6px);
-            background: rgba(12, 12, 12, 0.95);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            /* App-wide iOS-frosted-glass — same recipe as .modal / .glass. */
+            background: rgba(180, 184, 195, 0.22);
+            backdrop-filter: blur(6px) saturate(150%);
+            -webkit-backdrop-filter: blur(6px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 12px;
             padding: 6px;
-            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
             opacity: 0;
             visibility: hidden;
             transform: scale(0.96) translateY(-4px);
@@ -3792,6 +4445,52 @@
             <div class="modal-actions share-link-actions">
                 <button class="modal-btn primary share-link-copy" id="copyLinkBtn">Copy Link</button>
                 <button class="modal-btn secondary share-link-done" id="closeShareBtn">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         File Info Modal (Desktop v2 redesign, Figma screen #19) —
+         opened from a drive card's 3-dot menu "Properties" item.
+         Follows the canonical modal appearance (760px wide, iOS
+         frosted-glass fill) — all per-modal CSS lives in .file-info-modal
+         and only tweaks INTERNAL layout, never the shell.
+         ============================================================ -->
+    <div class="modal-overlay file-info-modal-overlay" id="fileInfoModalOverlay">
+        <div class="modal file-info-modal">
+            <div class="file-info-header">
+                <h2 class="file-info-title" id="fileInfoTitle">File Info</h2>
+                <button type="button" class="file-info-close" id="fileInfoCloseBtn" aria-label="Close">×</button>
+            </div>
+
+            <div class="file-info-hero">
+                <div class="file-info-thumb" id="fileInfoThumb" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                </div>
+                <div class="file-info-hero-text">
+                    <div class="file-info-name" id="fileInfoName">—</div>
+                    <div class="file-info-sub" id="fileInfoSub">—</div>
+                </div>
+            </div>
+
+            <div class="file-info-grid" id="fileInfoGrid">
+                <!-- Rows injected by renderer.js:
+                     Type / Size / Files / Peers / Status / Added -->
+            </div>
+
+            <div class="file-info-linkbox" id="fileInfoLinkBox">
+                <div class="file-info-linkbox-label">Share link</div>
+                <div class="file-info-linkbox-row">
+                    <div class="file-info-linkbox-value" id="fileInfoLink">—</div>
+                    <button type="button" class="file-info-linkbox-copy" id="fileInfoCopyBtn">Copy</button>
+                </div>
+            </div>
+
+            <div class="modal-actions file-info-actions">
+                <button type="button" class="modal-btn secondary file-info-done" id="fileInfoDoneBtn">Done</button>
             </div>
         </div>
     </div>

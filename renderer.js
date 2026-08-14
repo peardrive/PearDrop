@@ -138,13 +138,55 @@ function init() {
             
             // Handle DriveItem actions via DriveActions module
             item.on('action', async (event) => {
+                // ─── New Desktop v2 menu actions (Figma screen #18) ──
+                // These live entirely in the renderer and don't hit
+                // DriveActions / the backend. `properties` opens the new
+                // canonical File Info modal (Figma screen #19).
+                if (event.action === 'favorite') {
+                    const nowFav = toggleFavorite(event.data.id);
+                    updateDriveInList({ id: event.data.id, favorite: nowFav });
+                    showToast(nowFav ? 'Added to Favorites' : 'Removed from Favorites');
+                    return;
+                }
+                if (event.action === 'copy-link') {
+                    const link = event.data.shareLink
+                        || drives.find(d => d.id === event.data.id)?.shareLink;
+                    if (!link) return showToast('No share link yet', 'error');
+                    try {
+                        await navigator.clipboard.writeText(link);
+                        showToast('Link copied');
+                    } catch (_) {
+                        showToast('Failed to copy', 'error');
+                    }
+                    return;
+                }
+                if (event.action === 'show-qr') {
+                    const link = event.data.shareLink
+                        || drives.find(d => d.id === event.data.id)?.shareLink;
+                    if (!link) return showToast('No share link yet', 'error');
+                    showShareModal(link);
+                    return;
+                }
+                if (event.action === 'edit') {
+                    // TODO: rename modal — placeholder for now.
+                    showToast('Rename coming soon');
+                    return;
+                }
+                if (event.action === 'properties') {
+                    const storedDrive = drives.find(d => d.id === event.data.id);
+                    // openInfoModal lives inside the desktop top-bar IIFE that
+                    // runs later; it exposes itself on window at that time.
+                    window.openInfoModal?.({ ...event.data, ...(storedDrive || {}) });
+                    return;
+                }
+
                 // Handle more-info specially - show info panel
                 if (event.action === 'more-info') {
                     const result = await driveActions.handle(event.action, event.data);
                     // Merge stored drive data with fetched info
                     const storedDrive = drives.find(d => d.id === event.data.id);
-                    const fullData = { 
-                        ...event.data, 
+                    const fullData = {
+                        ...event.data,
                         ...storedDrive,
                         ...(result.success ? result.drive : {})
                     };
@@ -1156,8 +1198,38 @@ function normalizeDrive(drive) {
         // back to deriving from isUpload so the Share/Receive split filter
         // actually separates them (was defaulting everything to 'share').
         type: drive.type || (drive.isUpload === false ? 'download' : 'share'),
-        shareLink: drive.shareLink
+        shareLink: drive.shareLink,
+        favorite: isFavorite(drive.id || drive.driveId)
     };
+}
+
+// ─── Favorites (client-side, localStorage) ──────────────────────────────
+// Simple string-set of drive ids. Used by the Favorites tab filter and by
+// the 3-dot menu's Add/Remove-from-Favorites toggle.
+const FAVORITES_KEY = 'peardrop.favorites.v1';
+function loadFavorites() {
+    try {
+        const raw = localStorage.getItem(FAVORITES_KEY);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch (_) {
+        return new Set();
+    }
+}
+let favoritesSet = loadFavorites();
+function isFavorite(id) { return !!id && favoritesSet.has(id); }
+function saveFavorites() {
+    try {
+        localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favoritesSet]));
+    } catch (_) { /* quota exceeded / disabled — ignore */ }
+}
+function toggleFavorite(id) {
+    if (!id) return false;
+    if (favoritesSet.has(id)) favoritesSet.delete(id);
+    else favoritesSet.add(id);
+    saveFavorites();
+    return favoritesSet.has(id);
 }
 
 // ============================================================================
@@ -1358,7 +1430,15 @@ function parseSpeed(speedStr) {
 // File extensions Chromium can decode natively into a <video> element.
 // Anything outside this set silently falls back to the OS icon via the
 // existing get-file-thumbnail IPC (mkv/avi/wmv etc.).
-const VIDEO_EXTS = new Set(['.mp4', '.webm', '.m4v', '.mov', '.ogv', '.ogg']);
+// Chromium (Electron 28) can decode: mp4 (H.264/H.265 in most builds),
+// webm, m4v, mov, ogv/ogg. Adding avi/mkv/wmv/flv/ts/3gp/mts as best-effort —
+// generateVideoThumb attempts every one, and falls back gracefully via
+// its .catch if the codec inside isn't supported. So even mkv-with-h264
+// (very common) now gets a first-frame poster instead of an SVG icon.
+const VIDEO_EXTS = new Set([
+    '.mp4', '.webm', '.m4v', '.mov', '.ogv', '.ogg',
+    '.mkv', '.avi', '.wmv', '.flv', '.ts', '.3gp', '.mts', '.m2ts'
+]);
 
 function getFileExt(name) {
     if (!name) return '';
@@ -1544,9 +1624,14 @@ async function loadSingleFileThumbnail(driveId) {
         } else {
             const isVideo = VIDEO_EXTS.has(getFileExt(file.name));
             const fetcher = isVideo
-                ? generateVideoThumb(file.path).catch(() =>
-                    window.electronAPI.getFileThumbnail(file.path)
-                  )
+                ? generateVideoThumb(file.path).catch((err) => {
+                    // Log the reason so we can see WHY a specific file
+                    // failed to poster (bad codec, DRM, corrupt header).
+                    // Falls back to the OS-icon path which the filter
+                    // below then drops so the SVG icon shows.
+                    console.warn('[thumb] video frame extract failed for', file.name, '—', err && err.message);
+                    return window.electronAPI.getFileThumbnail(file.path);
+                  })
                 : window.electronAPI.getFileThumbnail(file.path);
             value = await fetcher;
             fileThumbnailCache.set(file.path, value || { kind: 'none', src: null });
@@ -1556,6 +1641,16 @@ async function loadSingleFileThumbnail(driveId) {
     }
 
     if (!value || !value.src) return;
+
+    // Only push REAL image previews (image files + video-frame extracts)
+    // through to the drive-item's `thumbnail`. If main.js came back with
+    // `kind: 'icon'` — that's `app.getFileIcon()` returning a small OS
+    // shell icon (Windows Music/PDF/etc.) — leaving `thumbnail` null lets
+    // the drive-item library render our beautiful category-tinted SVG
+    // instead of a pixelated 32-px OS glyph. Video-frame extracts come
+    // back with `kind: 'video'` (or no kind but a data-URL src from
+    // generateVideoThumb) — both are real previews, so allow them.
+    if (value.kind === 'icon') return;
 
     // Inject into the drive's data — lib re-renders the thumb slot.
     updateDriveInList({ id: driveId, thumbnail: value.src });
@@ -2701,13 +2796,17 @@ setActivePage('allshares');
     }
 
     // QR area → open existing QR scanner (camera + file picker in one modal).
+    // The Receive modal STAYS OPEN behind the scanner — the scanner is a
+    // sub-flow of Receive, not a replacement. On a successful scan we DO
+    // close Receive, because the scan itself hands the link back and the
+    // download starts immediately (nothing left for Receive to do).
     if (receiveQrArea) {
         receiveQrArea.addEventListener('click', () => {
-            closeReceiveModal();
             if (typeof window.openQrScanner === 'function') {
                 window.openQrScanner({
                     onResult: (text) => {
                         if (linkInput) linkInput.value = text;
+                        closeReceiveModal();
                         if (typeof startDownload === 'function') startDownload();
                     }
                 });
@@ -2817,6 +2916,126 @@ setActivePage('allshares');
             }
         });
     }
+
+    // ─── File Info Modal (Desktop v2, Figma screen #19) ─────────────
+    // Opened from a drive card's 3-dot menu → Properties. Reads from
+    // the canonical File Info modal DOM in index.html and populates it
+    // from a merged (event.data + stored drive) object.
+    const fileInfoOverlay  = document.getElementById('fileInfoModalOverlay');
+    const fileInfoModalEl  = fileInfoOverlay?.querySelector('.file-info-modal');
+    const fileInfoNameEl   = document.getElementById('fileInfoName');
+    const fileInfoSubEl    = document.getElementById('fileInfoSub');
+    const fileInfoThumbEl  = document.getElementById('fileInfoThumb');
+    const fileInfoGridEl   = document.getElementById('fileInfoGrid');
+    const fileInfoLinkEl   = document.getElementById('fileInfoLink');
+    const fileInfoCopyBtn  = document.getElementById('fileInfoCopyBtn');
+    const fileInfoCloseBtn = document.getElementById('fileInfoCloseBtn');
+    const fileInfoDoneBtn  = document.getElementById('fileInfoDoneBtn');
+
+    // Human-readable time-ago for the "Added" row. Falls back to a locale
+    // date string if the timestamp is > 30 days old.
+    function timeAgo(ts) {
+        if (!ts) return '—';
+        const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+        if (s < 60)   return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s/60)}m ago`;
+        if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+        const d = Math.floor(s / 86400);
+        if (d < 30)   return `${d}d ago`;
+        return new Date(ts).toLocaleDateString();
+    }
+
+    function statusLabel(status) {
+        switch (status) {
+            case 'sharing':     return 'Sharing';
+            case 'downloading': return 'Downloading';
+            case 'complete':    return 'Complete';
+            case 'paused':      return 'Paused';
+            case 'error':       return 'Error';
+            case 'inactive':    return 'Inactive';
+            case 'connecting':  return 'Connecting';
+            default:            return status || '—';
+        }
+    }
+
+    function typeLabel(type) {
+        if (type === 'download') return 'Download';
+        if (type === 'upload' || type === 'share') return 'Share';
+        return type || '—';
+    }
+
+    function openInfoModal(data) {
+        if (!fileInfoOverlay || !data) return;
+
+        const name = data.title || data.name || data.fileName || 'Untitled';
+        const size = typeof formatBytes === 'function'
+            ? formatBytes(data.size || data.totalBytes || 0)
+            : String(data.size || 0);
+        const fileCount = data.fileCount
+            || (Array.isArray(data.files) ? data.files.length : 0)
+            || 1;
+
+        fileInfoNameEl.textContent = name;
+        fileInfoSubEl.textContent  = `${typeLabel(data.type)} · ${size} · ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
+
+        // Property grid — Type / Size / Files / Peers / Status / Added.
+        const rows = [
+            ['Type',   typeLabel(data.type)],
+            ['Size',   size],
+            ['Files',  String(fileCount)],
+            ['Peers',  String(data.peers || 0)],
+            ['Status', statusLabel(data.status)],
+            ['Added',  timeAgo(data.addedAt)]
+        ];
+        fileInfoGridEl.innerHTML = rows.map(([label, value]) => `
+            <div class="file-info-grid-row">
+                <div class="file-info-grid-label">${label}</div>
+                <div class="file-info-grid-value" title="${value}">${value}</div>
+            </div>
+        `).join('');
+
+        // Share-link box — hide for drives that don't have a shareLink
+        // (partial downloads before manifest lands, orphaned rows, etc.).
+        const link = data.shareLink || '';
+        if (link) {
+            fileInfoModalEl.classList.remove('no-link');
+            fileInfoLinkEl.textContent = link;
+        } else {
+            fileInfoModalEl.classList.add('no-link');
+            fileInfoLinkEl.textContent = '';
+        }
+
+        fileInfoCopyBtn.textContent = 'Copy';
+        fileInfoOverlay.classList.add('active');
+    }
+
+    function closeInfoModal() {
+        if (fileInfoOverlay) fileInfoOverlay.classList.remove('active');
+    }
+
+    // Export openInfoModal so the DriveItem action handler at the top of
+    // renderer.js can reach it. (The handler is defined before this IIFE
+    // runs, but it looks the function up at CALL time via `openInfoModal`,
+    // which lives in the module scope after this assignment.)
+    window.openInfoModal  = openInfoModal;
+    window.closeInfoModal = closeInfoModal;
+
+    fileInfoCloseBtn?.addEventListener('click', closeInfoModal);
+    fileInfoDoneBtn?.addEventListener('click', closeInfoModal);
+    fileInfoOverlay?.addEventListener('click', (e) => {
+        if (e.target === fileInfoOverlay) closeInfoModal();
+    });
+    fileInfoCopyBtn?.addEventListener('click', async () => {
+        const link = fileInfoLinkEl?.textContent || '';
+        if (!link) return;
+        try {
+            await navigator.clipboard.writeText(link);
+            fileInfoCopyBtn.textContent = 'Copied!';
+            setTimeout(() => { fileInfoCopyBtn.textContent = 'Copy'; }, 1500);
+        } catch (_) {
+            showToast('Failed to copy', 'error');
+        }
+    });
 
     // Download-complete toast — bottom-right notification when a download
     // finishes. Distinct from the general center-bottom showToast(). The
